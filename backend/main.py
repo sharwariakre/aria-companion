@@ -15,6 +15,22 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+async def _prewarm_models():
+    """Load Whisper and Kokoro into memory at startup so the first call
+    doesn't time out waiting for model downloads / initialisation."""
+    import asyncio
+    from services.stt import _get_model as get_whisper
+    from services.tts import _get_pipeline as get_kokoro
+
+    logger.info("Pre-warming Whisper STT model…")
+    await asyncio.to_thread(get_whisper)
+    logger.info("Whisper ready.")
+
+    logger.info("Pre-warming Kokoro TTS pipeline…")
+    await asyncio.to_thread(get_kokoro)
+    logger.info("Kokoro ready.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -24,6 +40,9 @@ async def lifespan(app: FastAPI):
     audio_dir = settings.audio_dir
     os.makedirs(audio_dir, exist_ok=True)
     logger.info(f"Audio directory ready at {audio_dir}")
+
+    await _prewarm_models()
+    logger.info("All models loaded — Aria is ready to take calls.")
 
     yield
 
