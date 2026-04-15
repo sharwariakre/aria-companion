@@ -1,0 +1,42 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Whisper model cache
+~/.cache/huggingface/
+~/.cache/whisper/
+
+# TTS audio output (generated at runtime)
+backend/audio/*.wav
+backend/audio/*.mp3
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docker volumes (local bind mounts)
+pgdata/
+
+# Logs
+*.log
