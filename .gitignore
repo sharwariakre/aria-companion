@@ -30,6 +30,9 @@ htmlcov/
 # macOS
 .DS_Store
 
+# pyenv
+.python-version
+
 # IDE
 .vscode/
 .idea/
