@@ -2,35 +2,38 @@
 Call manager — orchestrates the full call lifecycle.
 
 Responsibilities:
-  • Trigger an outbound Twilio call
-  • Build the opening-greeting TwiML (on call answer)
+  • Trigger an outbound Twilio call (pre-generates greeting before dialing)
+  • Build the opening-greeting TwiML (instant response on call answer)
   • Build each turn's TwiML (transcribe → LLM → TTS → Record loop)
-  • Finalise the call record in the database
-  • Trigger an SMS escalation when the LLM sets the ESCALATE flag
+  • Finalise the call record (fast — just writes ended_at + transcript)
+  • post_call_processing() — background task for memory extraction + mood scoring
 """
 
 import logging
+import os
 import uuid
 from datetime import datetime
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse
 
 from config import get_settings
 from models.user import Call, User
+from services import escalation as escalation_service
 from services import llm as llm_service
 from services import memory_service
+from services import mood as mood_service
 from services import stt as stt_service
 from services import tts as tts_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-MAX_TURNS = 12          # end call after this many exchanges
-SILENCE_TIMEOUT = 6    # seconds of silence before Twilio stops recording
-MAX_RECORD_SECONDS = 60 # max seconds per user turn
+MAX_TURNS = 12
+SILENCE_TIMEOUT = 6
+MAX_RECORD_SECONDS = 60
+MOOD_ALERT_THRESHOLD = 0.35   # flag if mood drops below this vs baseline
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +44,9 @@ async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
     """
     Pre-generate the greeting (memories → LLM → TTS) BEFORE dialing so the
     webhook can respond instantly and never hit Twilio's 15-second timeout.
-
-    Returns the Twilio call SID.
     """
     from datetime import date
 
-    # 1. Create the call record first so we have an ID to reference
     call_record = Call(
         user_id=user.id,
         started_at=datetime.utcnow(),
@@ -57,23 +57,22 @@ async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
     await db.commit()
     await db.refresh(call_record)
 
-    # 2. Fetch relevant memories
+    # Fetch relevant memories
     context = f"Today is {date.today().strftime('%A, %B %d %Y')}. Calling {user.name}."
     memories = await memory_service.get_relevant_memories(user.id, context, db)
     call_record.retrieved_memories = memories or None
-    logger.info(f"Memories retrieved for call={call_record.id}: {bool(memories)}")
 
-    # 3. Generate opening LLM response
+    # Generate opening LLM response
     llm_resp = await llm_service.generate_opening(user.name, memories=memories)
     call_record.messages = [{"role": "assistant", "content": llm_resp.text}]
 
-    # 4. Synthesise TTS audio — store filename so webhook plays it instantly
+    # Synthesise TTS audio
     filename = await tts_service.synthesise(llm_resp.text)
     call_record.greeting_audio = filename
     await db.commit()
     logger.info(f"Greeting pre-generated: {filename}")
 
-    # 5. Now dial — webhook will return TwiML in milliseconds
+    # Dial
     webhook_url = f"{settings.base_url.rstrip('/')}/calls/webhook/{user.id}"
     status_url = f"{settings.base_url.rstrip('/')}/calls/status/{call_record.id}"
 
@@ -101,14 +100,9 @@ async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
 async def build_opening_greeting(
     user: User, call: Call, db: AsyncSession
 ) -> VoiceResponse:
-    """
-    Play the pre-generated greeting audio and open the first <Record>.
-    The greeting was generated in trigger_outbound_call() before dialing
-    so this webhook responds in milliseconds — well within Twilio's 15s limit.
-    """
+    """Play pre-generated greeting and open first <Record>. Responds in ms."""
     filename = call.greeting_audio
     if not filename:
-        # Fallback: generate on the fly (should only happen in edge cases)
         logger.warning(f"No pre-generated greeting for call={call.id}, generating now.")
         memories = call.retrieved_memories or ""
         llm_resp = await llm_service.generate_opening(user.name, memories=memories)
@@ -131,9 +125,7 @@ async def build_opening_greeting(
         play_beep=False,
         transcribe=False,
     )
-    # Fallback if <Record> gets no audio at all
     twiml.redirect(turn_url, method="POST")
-
     return twiml
 
 
@@ -147,68 +139,62 @@ async def build_turn_response(
     recording_url: str,
     db: AsyncSession,
 ) -> VoiceResponse:
-    """
-    1. Download & transcribe the user's recording.
-    2. Append user turn to conversation history.
-    3. Call Ollama for a response.
-    4. Synthesise response audio.
-    5. Return TwiML: <Play> + <Record> (or <Hangup> if conversation ends).
-    """
-    # --- Transcribe ---
     auth = None
     if settings.twilio_account_sid and settings.twilio_auth_token:
         auth = (settings.twilio_account_sid, settings.twilio_auth_token)
 
-    transcript = await stt_service.transcribe_url(recording_url, twilio_auth=auth)
-    logger.info(f"User said: '{transcript}'  (call={call.id})")
+    # Save recording for mood analysis later
+    turn_num = (call.turn_count or 0) + 1
+    recording_save_path = _recording_path(call.id, turn_num)
+
+    transcript = await stt_service.transcribe_url(
+        recording_url, twilio_auth=auth, save_path=recording_save_path
+    )
+    logger.info(f"User said: '{transcript}'  (call={call.id}  turn={turn_num})")
 
     messages = list(call.messages or [])
-
     if transcript:
         messages.append({"role": "user", "content": transcript})
 
-    call.turn_count = (call.turn_count or 0) + 1
+    call.turn_count = turn_num
 
-    # --- LLM — pass through memories that were fetched at call start ---
     memories = call.retrieved_memories or ""
     llm_resp = await llm_service.chat(messages, user_name=user.name, memories=memories)
-    logger.info(f"Aria says: '{llm_resp.text}'  end={llm_resp.should_end}  escalate={llm_resp.should_escalate}")
+    logger.info(f"Aria: '{llm_resp.text}'  end={llm_resp.should_end}  escalate={llm_resp.should_escalate}")
 
     messages.append({"role": "assistant", "content": llm_resp.text})
     call.messages = messages
 
-    # --- Persist ---
     if llm_resp.should_escalate:
         call.flagged = True
+        if user.family_phone:
+            escalation_service.send_sms(
+                user.family_phone, user.name,
+                "They mentioned something concerning during their call."
+            )
+
     await db.commit()
 
-    # --- TTS ---
     filename = await tts_service.synthesise(llm_resp.text)
     play_url = tts_service.audio_url(filename)
 
-    # --- Build TwiML ---
     twiml = VoiceResponse()
     twiml.play(play_url)
 
     should_hang_up = (
         llm_resp.should_end
         or call.turn_count >= MAX_TURNS
-        or not transcript  # user said nothing after a prompt
+        or not transcript
     )
 
     if should_hang_up:
         if not llm_resp.should_end:
-            # Max turns reached gracefully
             farewell = await tts_service.synthesise(
-                f"It was so lovely talking with you today, {user.name}. Take care, and I'll call again soon."
+                f"It was so lovely talking with you today, {user.name}. "
+                "Take care, and I'll call again soon."
             )
             twiml.play(tts_service.audio_url(farewell))
-
         twiml.hangup()
-
-        # Trigger SMS alert asynchronously (don't block the TwiML response)
-        if llm_resp.should_escalate and user.family_phone:
-            _send_escalation_sms(user)
     else:
         turn_url = _turn_url(user.id, call.id)
         twiml.record(
@@ -225,31 +211,110 @@ async def build_turn_response(
 
 
 # ---------------------------------------------------------------------------
-# Finalise call record
+# Finalise call (fast — called synchronously in status callback)
 # ---------------------------------------------------------------------------
 
 async def finalise_call(call: Call, db: AsyncSession) -> None:
-    """Write ended_at, flatten the transcript, then extract and store memories."""
+    """Write ended_at and flatten transcript. Heavy work runs in background."""
     call.ended_at = datetime.utcnow()
 
     messages = call.messages or []
-    lines = []
-    for msg in messages:
-        speaker = "Aria" if msg["role"] == "assistant" else "User"
-        lines.append(f"{speaker}: {msg['content']}")
+    lines = [
+        f"{'Aria' if m['role'] == 'assistant' else 'User'}: {m['content']}"
+        for m in messages
+    ]
     call.transcript = "\n".join(lines)
-
     await db.commit()
     logger.info(f"Call finalised  id={call.id}  turns={call.turn_count}")
 
-    # Extract facts from the transcript and store as embeddings for future calls
-    if call.transcript:
-        await memory_service.extract_and_store_memories(
-            user_id=call.user_id,
-            call_id=call.id,
-            transcript=call.transcript,
-            db=db,
-        )
+
+# ---------------------------------------------------------------------------
+# Post-call processing (background task — owns its own DB session)
+# ---------------------------------------------------------------------------
+
+async def post_call_processing(call_id: uuid.UUID) -> None:
+    """
+    Runs after a call ends as a FastAPI BackgroundTask.
+    Uses its own DB session — safe to run after the HTTP response is sent.
+
+    1. Memory extraction (LLM fact extraction + pgvector storage)
+    2. Mood scoring (librosa features + baseline comparison)
+    3. SMS escalation if mood drops significantly below baseline
+    """
+    from db.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        call = await db.get(Call, call_id)
+        if not call:
+            logger.warning(f"post_call_processing: call {call_id} not found.")
+            return
+
+        user = await db.get(User, call.user_id)
+
+        # 1. Memory extraction
+        if call.transcript:
+            await memory_service.extract_and_store_memories(
+                call.user_id, call.id, call.transcript, db
+            )
+
+        # 2. Mood scoring
+        await _score_and_save_mood(call, user, db)
+
+
+async def _score_and_save_mood(call: Call, user: User | None, db: AsyncSession) -> None:
+    """Find per-turn recordings, extract features, compute score, persist."""
+    recordings_dir = os.path.join(settings.audio_dir, "recordings")
+    if not os.path.isdir(recordings_dir):
+        logger.info("No recordings directory — skipping mood scoring.")
+        return
+
+    # Collect all recordings saved for this call, in turn order
+    prefix = str(call.id)
+    recording_files = sorted([
+        os.path.join(recordings_dir, f)
+        for f in os.listdir(recordings_dir)
+        if f.startswith(prefix) and f.endswith(".wav")
+    ])
+
+    if not recording_files:
+        logger.info(f"No recordings found for call={call.id} — skipping mood.")
+        return
+
+    # Concatenate into one file
+    combined_path = os.path.join(recordings_dir, f"{call.id}_combined.wav")
+    ok = await mood_service.concatenate_recordings(recording_files, combined_path)
+    if not ok:
+        logger.warning(f"Could not concatenate recordings for call={call.id}.")
+        return
+
+    try:
+        features = await mood_service.extract_audio_features(combined_path)
+        baseline = await mood_service.get_user_baseline(call.user_id, db)
+        score = mood_service.compute_mood_score(features, baseline)
+
+        call.mood_features = features
+        call.mood_score = score
+        call.mood_delta = round(score - 0.5, 3) if baseline is None else round(score - 0.5, 3)
+
+        # Escalate on significant mood dip (only once we have a real baseline)
+        if baseline is not None and score < MOOD_ALERT_THRESHOLD:
+            call.flagged = True
+            if user and user.family_phone:
+                escalation_service.send_sms(
+                    user.family_phone,
+                    user.name if user else "the user",
+                    f"Their mood score today was {score:.2f}, notably lower than their recent baseline.",
+                )
+
+        await db.commit()
+        logger.info(f"Mood scored  call={call.id}  score={score}  baseline={'yes' if baseline else 'building'}")
+    finally:
+        # Clean up individual turn recordings; keep combined for audit if needed
+        for p in recording_files:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -260,19 +325,6 @@ def _turn_url(user_id: uuid.UUID, call_id: uuid.UUID) -> str:
     return f"{settings.base_url.rstrip('/')}/calls/turn/{user_id}/{call_id}"
 
 
-def _send_escalation_sms(user: User) -> None:
-    """Fire-and-forget SMS to family member via Twilio."""
-    try:
-        client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-        client.messages.create(
-            to=user.family_phone,
-            from_=settings.twilio_phone_number,
-            body=(
-                f"Aria alert: {user.name} may need a check-in. "
-                "They mentioned something during their daily call that warrants attention. "
-                "Please reach out to them soon."
-            ),
-        )
-        logger.info(f"Escalation SMS sent to {user.family_phone}")
-    except Exception as exc:
-        logger.error(f"SMS escalation failed: {exc}")
+def _recording_path(call_id: uuid.UUID, turn: int) -> str:
+    recordings_dir = os.path.join(settings.audio_dir, "recordings")
+    return os.path.join(recordings_dir, f"{call_id}_{turn:03d}.wav")

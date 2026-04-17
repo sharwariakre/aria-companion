@@ -33,19 +33,21 @@ def _get_model():
 # Public API
 # ---------------------------------------------------------------------------
 
-async def transcribe_url(recording_url: str, twilio_auth: tuple[str, str] | None = None) -> str:
+async def transcribe_url(
+    recording_url: str,
+    twilio_auth: tuple[str, str] | None = None,
+    save_path: str | None = None,
+) -> str:
     """
-    Download a Twilio recording URL (or any accessible audio URL) and
-    transcribe it with Whisper.  Returns the transcription string, or an
-    empty string if the audio could not be fetched / transcribed.
+    Download a Twilio recording URL and transcribe it with Whisper.
+    Returns the transcription string, or empty string on failure.
 
-    Twilio recording URLs require HTTP Basic Auth
-    (account_sid, auth_token) unless you've opened them publicly.
+    If `save_path` is provided, the raw audio bytes are also written to
+    that path for downstream processing (e.g. mood feature extraction).
     """
     if not recording_url:
         return ""
 
-    # Twilio appends no extension — request .wav explicitly for best compat
     url = recording_url if recording_url.endswith((".wav", ".mp3")) else recording_url + ".wav"
 
     logger.info(f"Downloading recording: {url}")
@@ -53,6 +55,12 @@ async def transcribe_url(recording_url: str, twilio_auth: tuple[str, str] | None
     if not audio_bytes:
         logger.warning("Recording download returned empty body.")
         return ""
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "wb") as fh:
+            fh.write(audio_bytes)
+        logger.info(f"Recording saved to {save_path}")
 
     return await asyncio.to_thread(_transcribe_bytes, audio_bytes)
 
