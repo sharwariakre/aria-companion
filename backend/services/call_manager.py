@@ -39,12 +39,14 @@ MAX_RECORD_SECONDS = 60 # max seconds per user turn
 
 async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
     """
-    Create a Twilio outbound call to the user.
-    Pre-creates a Call DB record and passes the call_id in the webhook URL
-    so we can find the record when Twilio hits the webhook.
+    Pre-generate the greeting (memories → LLM → TTS) BEFORE dialing so the
+    webhook can respond instantly and never hit Twilio's 15-second timeout.
 
     Returns the Twilio call SID.
     """
+    from datetime import date
+
+    # 1. Create the call record first so we have an ID to reference
     call_record = Call(
         user_id=user.id,
         started_at=datetime.utcnow(),
@@ -55,12 +57,25 @@ async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
     await db.commit()
     await db.refresh(call_record)
 
-    webhook_url = (
-        f"{settings.base_url.rstrip('/')}/calls/webhook/{user.id}"
-    )
-    status_url = (
-        f"{settings.base_url.rstrip('/')}/calls/status/{call_record.id}"
-    )
+    # 2. Fetch relevant memories
+    context = f"Today is {date.today().strftime('%A, %B %d %Y')}. Calling {user.name}."
+    memories = await memory_service.get_relevant_memories(user.id, context, db)
+    call_record.retrieved_memories = memories or None
+    logger.info(f"Memories retrieved for call={call_record.id}: {bool(memories)}")
+
+    # 3. Generate opening LLM response
+    llm_resp = await llm_service.generate_opening(user.name, memories=memories)
+    call_record.messages = [{"role": "assistant", "content": llm_resp.text}]
+
+    # 4. Synthesise TTS audio — store filename so webhook plays it instantly
+    filename = await tts_service.synthesise(llm_resp.text)
+    call_record.greeting_audio = filename
+    await db.commit()
+    logger.info(f"Greeting pre-generated: {filename}")
+
+    # 5. Now dial — webhook will return TwiML in milliseconds
+    webhook_url = f"{settings.base_url.rstrip('/')}/calls/webhook/{user.id}"
+    status_url = f"{settings.base_url.rstrip('/')}/calls/status/{call_record.id}"
 
     client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
     call = client.calls.create(
@@ -72,7 +87,6 @@ async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
         status_callback_method="POST",
     )
 
-    # Store the Twilio SID so the webhook can locate this record
     call_record.twilio_call_sid = call.sid
     await db.commit()
 
@@ -88,27 +102,23 @@ async def build_opening_greeting(
     user: User, call: Call, db: AsyncSession
 ) -> VoiceResponse:
     """
-    Generate the opening greeting TTS audio and return TwiML that plays it
-    then opens the first <Record> to capture the user's response.
+    Play the pre-generated greeting audio and open the first <Record>.
+    The greeting was generated in trigger_outbound_call() before dialing
+    so this webhook responds in milliseconds — well within Twilio's 15s limit.
     """
-    from datetime import date
+    filename = call.greeting_audio
+    if not filename:
+        # Fallback: generate on the fly (should only happen in edge cases)
+        logger.warning(f"No pre-generated greeting for call={call.id}, generating now.")
+        memories = call.retrieved_memories or ""
+        llm_resp = await llm_service.generate_opening(user.name, memories=memories)
+        messages = list(call.messages or [])
+        messages.append({"role": "assistant", "content": llm_resp.text})
+        call.messages = messages
+        await db.commit()
+        filename = await tts_service.synthesise(llm_resp.text)
 
-    # Retrieve relevant memories and inject into system prompt
-    context = f"Today is {date.today().strftime('%A, %B %d %Y')}. Calling {user.name}."
-    memories = await memory_service.get_relevant_memories(user.id, context, db)
-    call.retrieved_memories = memories or None
-
-    llm_resp = await llm_service.generate_opening(user.name, memories=memories)
-
-    # Persist first assistant turn
-    messages = list(call.messages or [])
-    messages.append({"role": "assistant", "content": llm_resp.text})
-    call.messages = messages
-    await db.commit()
-
-    filename = await tts_service.synthesise(llm_resp.text)
     play_url = tts_service.audio_url(filename)
-
     turn_url = _turn_url(user.id, call.id)
 
     twiml = VoiceResponse()

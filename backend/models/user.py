@@ -48,6 +48,8 @@ class Call(Base):
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     # Memories injected into this call's system prompt (fetched once at call start)
     retrieved_memories: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Pre-generated greeting audio filename (set before dialing to beat Twilio's 15s timeout)
+    greeting_audio: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="calls")
     memories: Mapped[list["Memory"]] = relationship("Memory", back_populates="source_call", foreign_keys="Memory.source_call_id")
