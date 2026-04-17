@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
 from db.database import init_db
-from routers import calls
+from routers import calls, memory
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +29,11 @@ async def _prewarm_models():
     logger.info("Pre-warming Kokoro TTS pipeline…")
     await asyncio.to_thread(get_kokoro)
     logger.info("Kokoro ready.")
+
+    from services.memory_service import _get_embedder as get_embedder
+    logger.info("Pre-warming sentence-transformer embedding model…")
+    await asyncio.to_thread(get_embedder)
+    logger.info("Embedding model ready.")
 
 
 @asynccontextmanager
@@ -63,6 +68,7 @@ os.makedirs(audio_dir, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=audio_dir), name="audio")
 
 app.include_router(calls.router, prefix="/calls", tags=["calls"])
+app.include_router(memory.router, prefix="/memory", tags=["memory"])
 
 
 @app.get("/health")

@@ -30,7 +30,7 @@ async def get_db() -> AsyncSession:
 async def init_db() -> None:
     """Create all tables. Called on app startup."""
     # Import all models so Base knows about them before create_all
-    import models.user  # noqa: F401
+    import models.user  # noqa: F401  — registers User, Call, Memory with Base
 
     async with engine.begin() as conn:
         # Enable pgvector extension

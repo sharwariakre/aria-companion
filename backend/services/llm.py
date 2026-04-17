@@ -54,6 +54,7 @@ Your personality:
 - Never mention that you are an AI unless directly asked.
 - Speak naturally. Use their name occasionally but not every turn.
 
+{memories_section}
 Today is {today}.
 
 If you want to end the call naturally, add the token {goodbye} at the very end of your response.
@@ -63,9 +64,20 @@ Do NOT include the tokens mid-sentence — always place them at the absolute end
 """
 
 
-def build_system_prompt(user_name: str) -> str:
+def build_system_prompt(user_name: str, memories: str = "") -> str:
+    if memories:
+        memories_section = (
+            f"What you remember about {user_name} from past conversations:\n"
+            f"{memories}\n\n"
+            "Reference these naturally when relevant — weave them into conversation, "
+            "don't list them all at once.\n"
+        )
+    else:
+        memories_section = ""
+
     return SYSTEM_PROMPT_TEMPLATE.format(
         user_name=user_name,
+        memories_section=memories_section,
         today=date.today().strftime("%A, %B %d %Y"),
         goodbye=GOODBYE_TOKEN,
         escalate=ESCALATE_TOKEN,
@@ -79,6 +91,7 @@ def build_system_prompt(user_name: str) -> str:
 async def chat(
     messages: list[dict],
     user_name: str,
+    memories: str = "",
     temperature: float = 0.7,
 ) -> LLMResponse:
     """
@@ -90,7 +103,7 @@ async def chat(
     payload = {
         "model": settings.ollama_model,
         "messages": [
-            {"role": "system", "content": build_system_prompt(user_name)},
+            {"role": "system", "content": build_system_prompt(user_name, memories=memories)},
             *messages,
         ],
         "stream": False,
@@ -134,7 +147,7 @@ def _parse_response(raw: str) -> LLMResponse:
 # Opening greeting helper
 # ---------------------------------------------------------------------------
 
-async def generate_opening(user_name: str) -> LLMResponse:
+async def generate_opening(user_name: str, memories: str = "") -> LLMResponse:
     """Generate the very first line of a call — warm, brief, specific."""
     messages = [
         {
@@ -145,4 +158,4 @@ async def generate_opening(user_name: str) -> LLMResponse:
             ),
         }
     ]
-    return await chat(messages, user_name=user_name)
+    return await chat(messages, user_name=user_name, memories=memories)
