@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import String, Text, Float, Boolean, ForeignKey, DateTime, Time, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
+from pgvector.sqlalchemy import Vector
 
 from db.database import Base
 
@@ -45,5 +46,27 @@ class Call(Base):
     mood_delta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Memories injected into this call's system prompt (fetched once at call start)
+    retrieved_memories: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="calls")
+    memories: Mapped[list["Memory"]] = relationship("Memory", back_populates="source_call", foreign_keys="Memory.source_call_id")
+
+
+class Memory(Base):
+    __tablename__ = "memories"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Optional[list]] = mapped_column(Vector(384), nullable=True)
+    source_call_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("calls.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    source_call: Mapped[Optional["Call"]] = relationship("Call", back_populates="memories", foreign_keys=[source_call_id])

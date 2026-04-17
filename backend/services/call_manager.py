@@ -21,6 +21,7 @@ from twilio.twiml.voice_response import VoiceResponse
 from config import get_settings
 from models.user import Call, User
 from services import llm as llm_service
+from services import memory_service
 from services import stt as stt_service
 from services import tts as tts_service
 
@@ -90,7 +91,14 @@ async def build_opening_greeting(
     Generate the opening greeting TTS audio and return TwiML that plays it
     then opens the first <Record> to capture the user's response.
     """
-    llm_resp = await llm_service.generate_opening(user.name)
+    from datetime import date
+
+    # Retrieve relevant memories and inject into system prompt
+    context = f"Today is {date.today().strftime('%A, %B %d %Y')}. Calling {user.name}."
+    memories = await memory_service.get_relevant_memories(user.id, context, db)
+    call.retrieved_memories = memories or None
+
+    llm_resp = await llm_service.generate_opening(user.name, memories=memories)
 
     # Persist first assistant turn
     messages = list(call.messages or [])
@@ -151,8 +159,9 @@ async def build_turn_response(
 
     call.turn_count = (call.turn_count or 0) + 1
 
-    # --- LLM ---
-    llm_resp = await llm_service.chat(messages, user_name=user.name)
+    # --- LLM — pass through memories that were fetched at call start ---
+    memories = call.retrieved_memories or ""
+    llm_resp = await llm_service.chat(messages, user_name=user.name, memories=memories)
     logger.info(f"Aria says: '{llm_resp.text}'  end={llm_resp.should_end}  escalate={llm_resp.should_escalate}")
 
     messages.append({"role": "assistant", "content": llm_resp.text})
@@ -210,7 +219,7 @@ async def build_turn_response(
 # ---------------------------------------------------------------------------
 
 async def finalise_call(call: Call, db: AsyncSession) -> None:
-    """Write ended_at and flatten the transcript from message history."""
+    """Write ended_at, flatten the transcript, then extract and store memories."""
     call.ended_at = datetime.utcnow()
 
     messages = call.messages or []
@@ -222,6 +231,15 @@ async def finalise_call(call: Call, db: AsyncSession) -> None:
 
     await db.commit()
     logger.info(f"Call finalised  id={call.id}  turns={call.turn_count}")
+
+    # Extract facts from the transcript and store as embeddings for future calls
+    if call.transcript:
+        await memory_service.extract_and_store_memories(
+            user_id=call.user_id,
+            call_id=call.id,
+            transcript=call.transcript,
+            db=db,
+        )
 
 
 # ---------------------------------------------------------------------------
