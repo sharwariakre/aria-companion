@@ -33,6 +33,44 @@ settings = get_settings()
 
 
 # ---------------------------------------------------------------------------
+# Dashboard endpoint — last 7 calls for a user
+# ---------------------------------------------------------------------------
+
+@router.get("/{user_id}")
+async def get_calls(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return last 7 calls for the dashboard status card and history."""
+    result = await db.execute(
+        select(
+            Call.id, Call.started_at, Call.ended_at,
+            Call.turn_count, Call.mood_score, Call.flagged, Call.summary,
+        )
+        .where(Call.user_id == user_id)
+        .order_by(Call.started_at.desc())
+        .limit(7)
+    )
+    rows = result.all()
+    return [
+        {
+            "call_id": str(r.id),
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "ended_at": r.ended_at.isoformat() if r.ended_at else None,
+            "duration_seconds": (
+                int((r.ended_at - r.started_at).total_seconds())
+                if r.started_at and r.ended_at else None
+            ),
+            "turn_count": r.turn_count,
+            "mood_score": r.mood_score,
+            "flagged": r.flagged,
+            "summary": r.summary,
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
