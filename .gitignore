@@ -42,5 +42,9 @@ htmlcov/
 # Docker volumes (local bind mounts)
 pgdata/
 
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+
 # Logs
 *.log
