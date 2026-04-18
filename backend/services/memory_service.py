@@ -99,6 +99,35 @@ async def extract_and_store_memories(
     return count
 
 
+async def get_recent_memories(
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    top_k: int = 8,
+) -> str:
+    """
+    Retrieve the most recently stored memories for a user, ordered by creation
+    time. Used for opening greetings so Aria follows up on the last call's
+    topics rather than whatever scores highest in cosine similarity.
+    """
+    result = await db.execute(
+        text("""
+            SELECT content
+            FROM memories
+            WHERE user_id = :user_id
+            ORDER BY created_at DESC
+            LIMIT :top_k
+        """),
+        {"user_id": str(user_id), "top_k": top_k},
+    )
+    rows = result.fetchall()
+    if not rows:
+        return ""
+
+    formatted = "\n".join(f"- {row[0]}" for row in rows)
+    logger.info(f"Retrieved {len(rows)} recent memories for user={user_id}.")
+    return formatted
+
+
 async def get_relevant_memories(
     user_id: uuid.UUID,
     context: str,

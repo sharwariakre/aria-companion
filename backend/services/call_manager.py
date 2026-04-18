@@ -14,6 +14,7 @@ import os
 import uuid
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse
@@ -57,13 +58,27 @@ async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
     await db.commit()
     await db.refresh(call_record)
 
-    # Fetch relevant memories
-    context = f"Today is {date.today().strftime('%A, %B %d %Y')}. Calling {user.name}."
-    memories = await memory_service.get_relevant_memories(user.id, context, db)
+    # For the opening, use recent memories so Aria follows up on the last call.
+    # During the call, cosine search is used for contextual retrieval.
+    memories = await memory_service.get_recent_memories(user.id, db)
     call_record.retrieved_memories = memories or None
 
+    # Fetch previous call's opening so Aria doesn't repeat the same follow-up topic
+    prev_result = await db.execute(
+        select(Call)
+        .where(Call.user_id == user.id, Call.id != call_record.id, Call.messages.isnot(None))
+        .order_by(Call.started_at.desc())
+        .limit(1)
+    )
+    prev_call = prev_result.scalars().first()
+    prev_opening = None
+    if prev_call and prev_call.messages:
+        first_msg = prev_call.messages[0] if prev_call.messages else None
+        if first_msg and first_msg.get("role") == "assistant":
+            prev_opening = first_msg["content"]
+
     # Generate opening LLM response
-    llm_resp = await llm_service.generate_opening(user.name, memories=memories)
+    llm_resp = await llm_service.generate_opening(user.name, memories=memories, prev_opening=prev_opening)
     call_record.messages = [{"role": "assistant", "content": llm_resp.text}]
 
     # Synthesise TTS audio
@@ -152,6 +167,10 @@ async def build_turn_response(
     )
     logger.info(f"User said: '{transcript}'  (call={call.id}  turn={turn_num})")
 
+    # Detect user-initiated goodbye so Aria wraps up naturally
+    _goodbye_phrases = {"bye", "goodbye", "good bye", "talk later", "got to go", "gotta go", "take care", "have a good day"}
+    user_said_bye = any(phrase in transcript.lower() for phrase in _goodbye_phrases) if transcript else False
+
     messages = list(call.messages or [])
     if transcript:
         messages.append({"role": "user", "content": transcript})
@@ -181,10 +200,12 @@ async def build_turn_response(
     twiml = VoiceResponse()
     twiml.play(play_url)
 
+    # Don't end mid-conversation if Aria just asked a question
+    ends_with_question = llm_resp.text.rstrip().endswith("?")
     should_hang_up = (
-        llm_resp.should_end
+        (llm_resp.should_end and not ends_with_question)
+        or user_said_bye
         or call.turn_count >= MAX_TURNS
-        or not transcript
     )
 
     if should_hang_up:
@@ -278,6 +299,11 @@ async def _score_and_save_mood(call: Call, user: User | None, db: AsyncSession) 
 
     if not recording_files:
         logger.info(f"No recordings found for call={call.id} — skipping mood.")
+        return
+
+    MIN_TURNS_FOR_MOOD = 3
+    if (call.turn_count or 0) < MIN_TURNS_FOR_MOOD:
+        logger.info(f"Call too short ({call.turn_count} turns) — skipping mood scoring.")
         return
 
     # Concatenate into one file
