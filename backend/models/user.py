@@ -3,6 +3,7 @@ from datetime import datetime, time
 from typing import Optional
 
 from sqlalchemy import String, Text, Float, Boolean, ForeignKey, DateTime, Time, JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from pgvector.sqlalchemy import Vector
@@ -44,6 +45,7 @@ class Call(Base):
     turn_count: Mapped[int] = mapped_column(default=0)
     mood_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     mood_delta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    mood_features: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     # Memories injected into this call's system prompt (fetched once at call start)

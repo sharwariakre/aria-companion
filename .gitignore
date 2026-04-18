@@ -21,6 +21,7 @@ build/
 # TTS audio output (generated at runtime)
 backend/audio/*.wav
 backend/audio/*.mp3
+backend/audio/recordings/
 
 # Pytest / coverage
 .pytest_cache/

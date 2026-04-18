@@ -11,7 +11,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from services.call_manager import (
     build_opening_greeting,
     build_turn_response,
     finalise_call,
+    post_call_processing,
 )
 
 router = APIRouter()
@@ -132,6 +133,7 @@ async def call_turn(
 @router.post("/status/{call_id}")
 async def call_status(
     call_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     CallSid: str = Form(...),
     CallStatus: str = Form(...),
     CallDuration: str = Form(default="0"),
@@ -143,5 +145,7 @@ async def call_status(
         call = await db.get(Call, call_id)
         if call and not call.ended_at:
             await finalise_call(call, db)
+            # Memory extraction + mood scoring run after we respond to Twilio
+            background_tasks.add_task(post_call_processing, call_id)
 
     return Response(status_code=204)

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
 from db.database import init_db
-from routers import calls, memory
+from routers import calls, memory, mood
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
 
     audio_dir = settings.audio_dir
     os.makedirs(audio_dir, exist_ok=True)
+    os.makedirs(os.path.join(audio_dir, "recordings"), exist_ok=True)
     logger.info(f"Audio directory ready at {audio_dir}")
 
     await _prewarm_models()
@@ -69,6 +70,7 @@ app.mount("/audio", StaticFiles(directory=audio_dir), name="audio")
 
 app.include_router(calls.router, prefix="/calls", tags=["calls"])
 app.include_router(memory.router, prefix="/memory", tags=["memory"])
+app.include_router(mood.router, prefix="/mood", tags=["mood"])
 
 
 @app.get("/health")
