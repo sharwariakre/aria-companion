@@ -9,6 +9,7 @@ Responsibilities:
   • post_call_processing() — background task for memory extraction + mood scoring
 """
 
+import asyncio
 import logging
 import os
 import uuid
@@ -315,12 +316,25 @@ async def _score_and_save_mood(call: Call, user: User | None, db: AsyncSession) 
 
     try:
         features = await mood_service.extract_audio_features(combined_path)
-        baseline = await mood_service.get_user_baseline(call.user_id, db)
-        score = mood_service.compute_mood_score(features, baseline)
 
+        # Commit features first so the baseline query sees this call's data,
+        # then exclude this call from the baseline window so it isn't self-referential.
         call.mood_features = features
+        await db.commit()
+
+        # Run acoustic scoring and transcript sentiment in parallel
+        baseline_task = mood_service.get_user_baseline(call.user_id, db, exclude_call_id=call.id)
+        sentiment_task = mood_service.analyze_transcript_sentiment(call.transcript or "")
+        baseline, sentiment = await asyncio.gather(baseline_task, sentiment_task)
+
+        score, contradiction = mood_service.compute_mood_score(features, baseline, sentiment)
+
         call.mood_score = score
-        call.mood_delta = round(score - 0.5, 3) if baseline is None else round(score - 0.5, 3)
+        call.mood_delta = round(score - 0.5, 3)
+        call.sentiment_score = sentiment.get("sentiment_score")
+        call.emotional_state = sentiment.get("emotional_state")
+        call.masking_detected = sentiment.get("masking_detected", False)
+        call.contradiction_flag = contradiction
 
         # Escalate on significant mood dip (only once we have a real baseline)
         if baseline is not None and score < MOOD_ALERT_THRESHOLD:

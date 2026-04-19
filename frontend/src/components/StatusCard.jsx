@@ -55,6 +55,9 @@ export default function StatusCard({ calls }) {
         <p className={`text-lg font-semibold ${moodColor(last?.mood_score)}`}>
           {moodLabel(last?.mood_score)}
         </p>
+        {last?.emotional_state && (
+          <p className="text-xs text-gray-500 mt-1 capitalize">{last.emotional_state}</p>
+        )}
       </div>
     </div>
   );

@@ -164,7 +164,7 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8001
 ```
 
 Wait for:
@@ -175,7 +175,7 @@ All models loaded — Aria is ready to take calls.
 ### 5. Expose via ngrok
 
 ```bash
-ngrok http 8000
+ngrok http 8001
 ```
 
 Copy the `https://....ngrok-free.app` URL into `.env` as `BASE_URL`, then restart uvicorn.
