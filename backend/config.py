@@ -18,7 +18,8 @@ class Settings(BaseSettings):
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3"
+    ollama_model: str = "llama3.1:8b"       # used for background tasks (extraction, sentiment)
+    ollama_chat_model: str = "llama3.2:3b"  # used for real-time call chat (speed critical)
 
     # App
     base_url: str = "http://localhost:8001"
