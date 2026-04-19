@@ -346,6 +346,15 @@ async def _score_and_save_mood(call: Call, user: User | None, db: AsyncSession) 
                     f"Their mood score today was {score:.2f}, notably lower than their recent baseline.",
                 )
 
+        # Alert if Aria detected emotional masking (saying fine but showing signs of distress)
+        if call.masking_detected and user and user.family_phone:
+            escalation_service.send_sms(
+                user.family_phone,
+                user.name,
+                f"Aria noticed {user.name} may be downplaying how they feel. "
+                f"Emotional state detected: {call.emotional_state or 'unclear'}. Worth a check-in.",
+            )
+
         await db.commit()
         logger.info(f"Mood scored  call={call.id}  score={score}  baseline={'yes' if baseline else 'building'}")
     finally:
