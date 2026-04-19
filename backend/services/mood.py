@@ -1,24 +1,31 @@
 """
 Mood signals service — Phase 3.
 
-Extracts acoustic features from call audio using librosa and computes a
-mood score relative to the user's personal baseline.
+Two signal sources fused into a single score:
+  1. Acoustic features (librosa) — energy, pitch, speech rate, pause ratio
+  2. Transcript sentiment (Ollama LLM) — emotional_state, masking_detected
 
-Librosa is imported lazily — it's slow to load and is not pre-warmed at
-startup. The first call with audio will take a few extra seconds.
+Final score = 0.4 * acoustic + 0.6 * sentiment.
+contradiction_flag is set when the two sources differ by more than 0.4.
 """
 
 import asyncio
+import json
 import logging
 import os
+import re
 import uuid
 from typing import Optional
 
+import httpx
 import numpy as np
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
+
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 # ---------------------------------------------------------------------------
@@ -100,18 +107,126 @@ def _empty_features() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Transcript sentiment analysis
+# ---------------------------------------------------------------------------
+
+_SENTIMENT_PROMPT = """\
+Analyze the emotional state of the user (the person being called — not Aria) \
+in this phone call transcript.
+
+Respond with a JSON object only. No explanation, no markdown fences, just raw JSON.
+
+{{
+  "sentiment_score": <float 0.0–1.0 — 0.0 = very distressed, 0.5 = neutral, 1.0 = very positive>,
+  "emotional_state": <one word — choose from: cheerful, content, neutral, tired, anxious, sad, distressed>,
+  "masking_detected": <true if the user seems to be downplaying negative feelings or saying they are fine when the conversation suggests otherwise>,
+  "reasoning": <one sentence explaining your assessment>
+}}
+
+Transcript:
+{transcript}"""
+
+
+async def analyze_transcript_sentiment(transcript: str) -> dict:
+    """
+    Ask Ollama to assess the emotional content of a call transcript.
+    Returns a dict with sentiment_score, emotional_state, masking_detected, reasoning.
+    Falls back to neutral defaults on any error.
+    """
+    _default = {
+        "sentiment_score": 0.5,
+        "emotional_state": "neutral",
+        "masking_detected": False,
+        "reasoning": "Sentiment analysis unavailable.",
+    }
+
+    if not transcript or not transcript.strip():
+        return _default
+
+    prompt = _SENTIMENT_PROMPT.format(transcript=transcript)
+
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.ollama_base_url, timeout=120.0
+        ) as client:
+            resp = await client.post(
+                "/api/generate",
+                json={
+                    "model": settings.ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.1},
+                },
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("response", "").strip()
+    except Exception as exc:
+        logger.error(f"Sentiment analysis LLM call failed: {exc}")
+        return _default
+
+    # Strip markdown fences if the model wraps the JSON anyway
+    raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("`").strip()
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        # Try extracting the first {...} block
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group())
+            except json.JSONDecodeError:
+                logger.warning(f"Could not parse sentiment JSON: {raw[:200]}")
+                return _default
+        else:
+            logger.warning(f"No JSON found in sentiment response: {raw[:200]}")
+            return _default
+
+    result = {
+        "sentiment_score": float(data.get("sentiment_score", 0.5)),
+        "emotional_state": str(data.get("emotional_state", "neutral")).lower(),
+        "masking_detected": bool(data.get("masking_detected", False)),
+        "reasoning": str(data.get("reasoning", "")),
+    }
+    result["sentiment_score"] = max(0.0, min(1.0, result["sentiment_score"]))
+    logger.info(f"Sentiment: {result}")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Mood scoring
 # ---------------------------------------------------------------------------
 
-def compute_mood_score(features: dict, baseline: Optional[dict]) -> float:
+def compute_mood_score(
+    features: dict,
+    baseline: Optional[dict],
+    sentiment: Optional[dict] = None,
+) -> tuple[float, bool]:
     """
-    Score 0.0–1.0 relative to the user's personal baseline.
-      0.0 = much lower energy / engagement than baseline
-      0.5 = no baseline yet (neutral)
-      1.0 = much higher energy / engagement than baseline
+    Returns (combined_score, contradiction_flag).
 
-    Higher energy, higher pitch, faster speech rate → higher score.
-    Higher pause ratio → lower score.
+    combined_score: 0.0–1.0
+      - If sentiment available: 0.4 * acoustic + 0.6 * sentiment_score
+      - If no sentiment:        acoustic score only
+      - If no baseline:         sentiment_score (or 0.5 if no sentiment either)
+
+    contradiction_flag: True when acoustic and sentiment scores differ by > 0.4
+    """
+    acoustic_score = _compute_acoustic_score(features, baseline)
+    sentiment_score = sentiment.get("sentiment_score", 0.5) if sentiment else None
+
+    if sentiment_score is None:
+        return acoustic_score, False
+
+    combined = round(acoustic_score * 0.4 + sentiment_score * 0.6, 3)
+    contradiction = abs(acoustic_score - sentiment_score) > 0.4
+    return combined, contradiction
+
+
+def _compute_acoustic_score(features: dict, baseline: Optional[dict]) -> float:
+    """
+    Acoustic-only score 0.0–1.0 relative to the user's personal baseline.
+    Returns 0.5 when no baseline is available.
     """
     if not baseline:
         return 0.5
@@ -122,11 +237,10 @@ def compute_mood_score(features: dict, baseline: Optional[dict]) -> float:
         pct = (val - base) / base
         return max(0.0, min(1.0, 0.5 + pct * sensitivity * 0.5))
 
-    energy_score  = delta_score(features.get("energy", 0),       baseline.get("energy", 0))
-    pitch_score   = delta_score(features.get("pitch_mean", 0),   baseline.get("pitch_mean", 1), sensitivity=1.0)
-    speech_score  = delta_score(features.get("speech_rate", 0),  baseline.get("speech_rate", 0))
-    # Higher pause ratio → worse mood → invert
-    pause_score   = 1.0 - delta_score(features.get("pause_ratio", 0.5), baseline.get("pause_ratio", 0.5))
+    energy_score = delta_score(features.get("energy", 0),      baseline.get("energy", 0))
+    pitch_score  = delta_score(features.get("pitch_mean", 0),  baseline.get("pitch_mean", 1), sensitivity=1.0)
+    speech_score = delta_score(features.get("speech_rate", 0), baseline.get("speech_rate", 0))
+    pause_score  = 1.0 - delta_score(features.get("pause_ratio", 0.5), baseline.get("pause_ratio", 0.5))
 
     score = (
         energy_score * 0.35
@@ -141,25 +255,34 @@ def compute_mood_score(features: dict, baseline: Optional[dict]) -> float:
 # Baseline query
 # ---------------------------------------------------------------------------
 
-async def get_user_baseline(user_id: uuid.UUID, db: AsyncSession) -> Optional[dict]:
+async def get_user_baseline(
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    exclude_call_id: Optional[uuid.UUID] = None,
+) -> Optional[dict]:
     """
-    Average mood_features from the user's last 3 completed calls.
-    Returns None if fewer than 3 calls with features exist.
+    Average mood_features from the user's last 2 completed calls (excluding the
+    current call). Returns None if fewer than 2 prior calls with features exist.
+    Requiring only 2 prior calls means the 3rd real call gets the first score.
     """
     result = await db.execute(
         text("""
             SELECT mood_features
             FROM calls
-            WHERE user_id  = :user_id
+            WHERE user_id       = :user_id
               AND mood_features IS NOT NULL
-              AND ended_at  IS NOT NULL
+              AND ended_at      IS NOT NULL
+              AND id            != :exclude_id
             ORDER BY ended_at DESC
             LIMIT 3
         """),
-        {"user_id": str(user_id)},
+        {
+            "user_id": str(user_id),
+            "exclude_id": str(exclude_call_id) if exclude_call_id else "00000000-0000-0000-0000-000000000000",
+        },
     )
     rows = result.fetchall()
-    if len(rows) < 3:
+    if len(rows) < 2:
         return None
 
     keys = ["energy", "pitch_mean", "pitch_std", "speech_rate", "pause_ratio"]

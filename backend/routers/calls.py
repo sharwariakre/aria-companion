@@ -11,7 +11,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ from twilio.twiml.voice_response import VoiceResponse
 
 from config import get_settings
 from db.database import get_db
-from models.user import Call, User
+from models.user import Call, Memory, User
 from services.call_manager import (
     build_opening_greeting,
     build_turn_response,
@@ -46,6 +46,7 @@ async def get_calls(
         select(
             Call.id, Call.started_at, Call.ended_at,
             Call.turn_count, Call.mood_score, Call.flagged, Call.summary,
+            Call.emotional_state, Call.masking_detected, Call.contradiction_flag,
         )
         .where(Call.user_id == user_id)
         .order_by(Call.started_at.desc())
@@ -65,9 +66,65 @@ async def get_calls(
             "mood_score": r.mood_score,
             "flagged": r.flagged,
             "summary": r.summary,
+            "emotional_state": r.emotional_state,
+            "masking_detected": r.masking_detected or False,
+            "contradiction_flag": r.contradiction_flag or False,
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Full call report — single call with transcript, mood features, memories
+# ---------------------------------------------------------------------------
+
+@router.get("/{user_id}/{call_id}")
+async def get_call_report(
+    user_id: uuid.UUID,
+    call_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a full JSON report for a single call."""
+    call = await db.get(Call, call_id)
+    if not call or call.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    # Fetch memories extracted from this call
+    mem_result = await db.execute(
+        select(Memory.content, Memory.created_at)
+        .where(Memory.source_call_id == call_id)
+        .order_by(Memory.created_at.asc())
+    )
+    memories = [{"content": r.content, "created_at": r.created_at.isoformat()} for r in mem_result.all()]
+
+    duration = (
+        int((call.ended_at - call.started_at).total_seconds())
+        if call.started_at and call.ended_at else None
+    )
+
+    return {
+        "call_id": str(call.id),
+        "twilio_call_sid": call.twilio_call_sid,
+        "started_at": call.started_at.isoformat() if call.started_at else None,
+        "ended_at": call.ended_at.isoformat() if call.ended_at else None,
+        "duration_seconds": duration,
+        "turn_count": call.turn_count,
+        "flagged": call.flagged,
+        "summary": call.summary,
+        "mood": {
+            "score": call.mood_score,
+            "delta": call.mood_delta,
+            "features": call.mood_features,
+            "sentiment_score": call.sentiment_score,
+            "emotional_state": call.emotional_state,
+            "masking_detected": call.masking_detected or False,
+            "contradiction_flag": call.contradiction_flag or False,
+        },
+        "transcript": call.transcript,
+        "messages": call.messages,
+        "retrieved_memories": call.retrieved_memories,
+        "extracted_memories": memories,
+    }
 
 
 # ---------------------------------------------------------------------------

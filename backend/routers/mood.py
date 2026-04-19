@@ -24,7 +24,10 @@ async def get_mood_history(
     Used by the dashboard to render the weekly mood trend chart.
     """
     result = await db.execute(
-        select(Call.id, Call.started_at, Call.mood_score, Call.flagged)
+        select(
+            Call.id, Call.started_at, Call.mood_score, Call.flagged,
+            Call.emotional_state, Call.masking_detected, Call.contradiction_flag,
+        )
         .where(Call.user_id == user_id, Call.mood_score.isnot(None))
         .order_by(Call.started_at.asc())
     )
@@ -36,6 +39,9 @@ async def get_mood_history(
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "mood_score": r.mood_score,
             "flagged": r.flagged,
+            "emotional_state": r.emotional_state,
+            "masking_detected": r.masking_detected or False,
+            "contradiction_flag": r.contradiction_flag or False,
         }
         for r in rows
     ]
