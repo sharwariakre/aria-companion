@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
 
+    # Email alerts (Gmail SMTP)
+    alert_email_from: str = ""      # your Gmail address
+    alert_email_password: str = ""  # Gmail App Password (not your login password)
+    alert_email_to: str = ""        # family member's email
+
     # Database — port 5433 avoids conflict with any local Postgres on 5432
     database_url: str = "postgresql+asyncpg://aria:aria@localhost:5433/aria_db"
 

@@ -187,11 +187,10 @@ async def build_turn_response(
 
     if llm_resp.should_escalate:
         call.flagged = True
-        if user.family_phone:
-            escalation_service.send_sms(
-                user.family_phone, user.name,
-                "They mentioned something concerning during their call."
-            )
+        escalation_service.send_alert(
+            user.name,
+            "They mentioned something concerning during their call — please check in immediately.",
+        )
 
     await db.commit()
 
@@ -339,17 +338,14 @@ async def _score_and_save_mood(call: Call, user: User | None, db: AsyncSession) 
         # Escalate on significant mood dip (only once we have a real baseline)
         if baseline is not None and score < MOOD_ALERT_THRESHOLD:
             call.flagged = True
-            if user and user.family_phone:
-                escalation_service.send_sms(
-                    user.family_phone,
-                    user.name if user else "the user",
-                    f"Their mood score today was {score:.2f}, notably lower than their recent baseline.",
-                )
+            escalation_service.send_alert(
+                user.name if user else "the user",
+                f"Their mood score today was {score:.2f}, notably lower than their recent baseline.",
+            )
 
         # Alert if Aria detected emotional masking (saying fine but showing signs of distress)
-        if call.masking_detected and user and user.family_phone:
-            escalation_service.send_sms(
-                user.family_phone,
+        if call.masking_detected and user:
+            escalation_service.send_alert(
                 user.name,
                 f"Aria noticed {user.name} may be downplaying how they feel. "
                 f"Emotional state detected: {call.emotional_state or 'unclear'}. Worth a check-in.",
