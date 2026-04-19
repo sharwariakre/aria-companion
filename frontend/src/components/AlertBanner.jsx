@@ -12,19 +12,32 @@ function formatTime(isoString) {
 
 export default function AlertBanner({ calls }) {
   const last = calls?.[0];
-  if (!last?.flagged) return null;
+  if (!last?.flagged && !last?.masking_detected) return null;
 
   return (
-    <div className="bg-red-50 border border-red-200 rounded-lg px-5 py-4 flex items-start gap-3">
-      <span className="text-red-500 text-lg leading-none mt-0.5">⚠</span>
-      <div>
-        <p className="text-sm font-semibold text-red-800">
-          Aria flagged this call. Margaret may need a check-in.
-        </p>
-        <p className="text-xs text-red-600 mt-0.5">
-          {formatTime(last.started_at)}
-        </p>
-      </div>
+    <div className="space-y-2">
+      {last?.flagged && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-5 py-4 flex items-start gap-3">
+          <span className="text-red-500 text-lg leading-none mt-0.5">⚠</span>
+          <div>
+            <p className="text-sm font-semibold text-red-800">
+              Aria flagged this call. Margaret may need a check-in.
+            </p>
+            <p className="text-xs text-red-600 mt-0.5">{formatTime(last.started_at)}</p>
+          </div>
+        </div>
+      )}
+      {last?.masking_detected && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-5 py-4 flex items-start gap-3">
+          <span className="text-amber-500 text-lg leading-none mt-0.5">◐</span>
+          <div>
+            <p className="text-sm font-semibold text-amber-800">
+              Aria noticed Margaret may be downplaying how she feels.
+            </p>
+            <p className="text-xs text-amber-600 mt-0.5">{formatTime(last.started_at)}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
