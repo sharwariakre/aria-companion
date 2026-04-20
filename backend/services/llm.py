@@ -103,7 +103,7 @@ async def chat(
     The system prompt is prepended automatically.
     """
     payload = {
-        "model": settings.ollama_model,
+        "model": settings.ollama_chat_model,
         "messages": [
             {"role": "system", "content": build_system_prompt(user_name, memories=memories)},
             *messages,
