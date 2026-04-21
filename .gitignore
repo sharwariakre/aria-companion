@@ -45,6 +45,7 @@ pgdata/
 # Frontend build artifacts
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 
 # Logs
 *.log

@@ -41,22 +41,31 @@ export default function StatusCard({ calls }) {
         <p className="text-lg font-semibold text-gray-900">
           {last ? formatCallTime(last.started_at) : "No calls yet"}
         </p>
+        {last?.missed && (
+          <p className="text-xs text-gray-400 mt-0.5">Aria couldn't get through</p>
+        )}
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg p-5">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Duration</p>
         <p className="text-lg font-semibold text-gray-900">
-          {last ? formatDuration(last.duration_seconds, last.turn_count) : "—"}
+          {last?.missed ? "—" : last ? formatDuration(last.duration_seconds, last.turn_count) : "—"}
         </p>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg p-5">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Mood</p>
-        <p className={`text-lg font-semibold ${moodColor(last?.mood_score)}`}>
-          {moodLabel(last?.mood_score)}
-        </p>
-        {last?.emotional_state && (
-          <p className="text-xs text-gray-500 mt-1 capitalize">{last.emotional_state}</p>
+        {last?.missed ? (
+          <p className="text-sm text-gray-400 mt-0.5">No data — call not answered</p>
+        ) : (
+          <>
+            <p className={`text-lg font-semibold ${moodColor(last?.mood_score)}`}>
+              {moodLabel(last?.mood_score)}
+            </p>
+            {last?.emotional_state && (
+              <p className="text-xs text-gray-500 mt-0.5 capitalize">{last.emotional_state}</p>
+            )}
+          </>
         )}
       </div>
     </div>
