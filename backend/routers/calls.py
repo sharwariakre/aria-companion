@@ -47,6 +47,7 @@ async def get_calls(
             Call.id, Call.started_at, Call.ended_at,
             Call.turn_count, Call.mood_score, Call.flagged, Call.summary,
             Call.emotional_state, Call.masking_detected, Call.contradiction_flag,
+            Call.missed, Call.is_retry,
         )
         .where(Call.user_id == user_id)
         .order_by(Call.started_at.desc())
@@ -69,6 +70,8 @@ async def get_calls(
             "emotional_state": r.emotional_state,
             "masking_detected": r.masking_detected or False,
             "contradiction_flag": r.contradiction_flag or False,
+            "missed": r.missed or False,
+            "is_retry": r.is_retry or False,
         }
         for r in rows
     ]
@@ -236,11 +239,20 @@ async def call_status(
 ):
     logger.info(f"Call status update  call={call_id}  status={CallStatus}")
 
-    if CallStatus in ("completed", "failed", "busy", "no-answer", "canceled"):
-        call = await db.get(Call, call_id)
+    call = await db.get(Call, call_id)
+
+    if CallStatus in ("completed",):
         if call and not call.ended_at:
             await finalise_call(call, db)
-            # Memory extraction + mood scoring run after we respond to Twilio
             background_tasks.add_task(post_call_processing, call_id)
+
+    elif CallStatus in ("no-answer", "busy", "failed"):
+        if call:
+            if not call.ended_at:
+                call.ended_at = datetime.utcnow()
+                await db.commit()
+            # Determine user_id for missed call handler
+            from services.missed_call import handle_missed_call
+            background_tasks.add_task(handle_missed_call, call_id, call.user_id)
 
     return Response(status_code=204)

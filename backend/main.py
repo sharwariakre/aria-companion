@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
 from db.database import init_db
-from routers import calls, memory, mood
+from routers import calls, memory, mood, users
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,9 +51,14 @@ async def lifespan(app: FastAPI):
     await _prewarm_models()
     logger.info("All models loaded — Aria is ready to take calls.")
 
+    from services.scheduler import scheduler, schedule_all_users
+    await schedule_all_users()
+    scheduler.start()
+    logger.info("Scheduler started.")
+
     yield
 
-    # Shutdown (nothing special needed for Phase 1)
+    scheduler.shutdown()
     logger.info("Shutting down Aria backend")
 
 
@@ -67,7 +72,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -79,6 +84,7 @@ app.mount("/audio", StaticFiles(directory=audio_dir), name="audio")
 app.include_router(calls.router, prefix="/calls", tags=["calls"])
 app.include_router(memory.router, prefix="/memory", tags=["memory"])
 app.include_router(mood.router, prefix="/mood", tags=["mood"])
+app.include_router(users.router, prefix="/users", tags=["users"])
 
 
 @app.get("/health")
