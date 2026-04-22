@@ -42,7 +42,7 @@ MOOD_ALERT_THRESHOLD = 0.35   # flag if mood drops below this vs baseline
 # Outbound call trigger
 # ---------------------------------------------------------------------------
 
-async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
+async def trigger_outbound_call(user: User, db: AsyncSession, is_retry: bool = False) -> str:
     """
     Pre-generate the greeting (memories → LLM → TTS) BEFORE dialing so the
     webhook can respond instantly and never hit Twilio's 15-second timeout.
@@ -54,6 +54,7 @@ async def trigger_outbound_call(user: User, db: AsyncSession) -> str:
         started_at=datetime.utcnow(),
         messages=[],
         turn_count=0,
+        is_retry=is_retry,
     )
     db.add(call_record)
     await db.commit()
