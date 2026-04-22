@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 600})
 
 
 async def _call_user(user_id: str) -> None:
