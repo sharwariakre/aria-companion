@@ -63,7 +63,7 @@ async def handle_missed_call(call_id: uuid.UUID, user_id: uuid.UUID) -> None:
 async def _retry_call(user_id: str) -> None:
     """Fire a retry call marked as is_retry=True."""
     from db.database import AsyncSessionLocal
-    from models.user import Call, User
+    from models.user import User
     from services.call_manager import trigger_outbound_call
     import uuid as _uuid
 
@@ -72,24 +72,11 @@ async def _retry_call(user_id: str) -> None:
         if not user:
             return
 
-        # Pre-mark the call record as a retry before dialing
-        call = Call(
-            user_id=user.id,
-            started_at=datetime.utcnow(),
-            messages=[],
-            turn_count=0,
-            is_retry=True,
-        )
-        db.add(call)
-        await db.commit()
-        await db.refresh(call)
-
         try:
-            sid = await trigger_outbound_call(user, db)
+            # trigger_outbound_call creates the Call record — mark it as retry after
+            sid = await trigger_outbound_call(user, db, is_retry=True)
             logger.info(f"Retry call placed for {user.name} — SID {sid}")
         except Exception as exc:
-            call.missed = True
-            await db.commit()
             logger.error(f"Retry call failed for {user.name}: {exc}")
             escalation_service.send_alert(
                 user.name,

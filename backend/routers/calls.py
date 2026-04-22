@@ -246,7 +246,7 @@ async def call_status(
             await finalise_call(call, db)
             background_tasks.add_task(post_call_processing, call_id)
 
-    elif CallStatus in ("no-answer", "busy", "failed"):
+    elif CallStatus in ("no-answer", "busy", "failed", "canceled"):
         if call:
             if not call.ended_at:
                 call.ended_at = datetime.utcnow()
