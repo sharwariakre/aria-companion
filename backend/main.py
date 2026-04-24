@@ -1,6 +1,8 @@
+import asyncio
 import os
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +39,65 @@ async def _prewarm_models():
     logger.info("Embedding model ready.")
 
 
+async def _reconcile_open_calls():
+    """On startup, close any calls that never received a Twilio status callback."""
+    from datetime import timedelta
+    from sqlalchemy import select
+    from db.database import AsyncSessionLocal
+    from models.user import Call
+    from twilio.rest import Client
+
+    async with AsyncSessionLocal() as db:
+        cutoff = datetime.utcnow() - timedelta(minutes=5)
+        result = await db.execute(
+            select(Call).where(
+                Call.ended_at.is_(None),
+                Call.twilio_call_sid.isnot(None),
+                Call.started_at < cutoff,
+            )
+        )
+        open_calls = result.scalars().all()
+
+    if not open_calls:
+        return
+
+    logger.info(f"Reconciling {len(open_calls)} open call(s) with Twilio...")
+    client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+
+    for call in open_calls:
+        try:
+            twilio_call = client.calls(call.twilio_call_sid).fetch()
+            status = twilio_call.status
+            duration = int(twilio_call.duration or 0)
+            logger.info(f"Reconcile call={call.id}  status={status}  duration={duration}s")
+
+            async with AsyncSessionLocal() as db:
+                call = await db.get(Call, call.id)
+                if not call or call.ended_at:
+                    continue
+
+                has_conversation = bool(call.messages and len(call.messages) > 1)
+                is_missed = (
+                    status in ("no-answer", "busy", "failed", "canceled")
+                    or (status == "completed" and duration < 30 and not has_conversation)
+                )
+
+                if is_missed:
+                    call.ended_at = datetime.utcnow()
+                    await db.commit()
+                    from services.missed_call import handle_missed_call
+                    await handle_missed_call(call.id, call.user_id)
+                elif status == "completed":
+                    from services.call_manager import finalise_call, post_call_processing
+                    await finalise_call(call, db)
+                    asyncio.create_task(post_call_processing(call.id))
+                else:
+                    call.ended_at = datetime.utcnow()
+                    await db.commit()
+        except Exception as exc:
+            logger.warning(f"Reconcile failed for call={call.id}: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -50,6 +111,8 @@ async def lifespan(app: FastAPI):
 
     await _prewarm_models()
     logger.info("All models loaded — Aria is ready to take calls.")
+
+    await _reconcile_open_calls()
 
     from services.scheduler import scheduler, schedule_all_users
     await schedule_all_users()

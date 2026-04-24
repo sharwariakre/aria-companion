@@ -243,15 +243,23 @@ async def call_status(
 
     if CallStatus in ("completed",):
         if call and not call.ended_at:
-            await finalise_call(call, db)
-            background_tasks.add_task(post_call_processing, call_id)
+            duration = int(CallDuration or 0)
+            has_conversation = bool(call.messages and len(call.messages) > 1)
+            # Voicemail or instant hangup — treat as missed
+            if duration < 30 and not has_conversation:
+                call.ended_at = datetime.utcnow()
+                await db.commit()
+                from services.missed_call import handle_missed_call
+                background_tasks.add_task(handle_missed_call, call_id, call.user_id)
+            else:
+                await finalise_call(call, db)
+                background_tasks.add_task(post_call_processing, call_id)
 
     elif CallStatus in ("no-answer", "busy", "failed", "canceled"):
         if call:
             if not call.ended_at:
                 call.ended_at = datetime.utcnow()
                 await db.commit()
-            # Determine user_id for missed call handler
             from services.missed_call import handle_missed_call
             background_tasks.add_task(handle_missed_call, call_id, call.user_id)
 
