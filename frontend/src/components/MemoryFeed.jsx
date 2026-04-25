@@ -1,6 +1,7 @@
 function formatDate(isoString) {
   if (!isoString) return "";
-  return new Date(isoString).toLocaleDateString("en-US", {
+  const s = isoString.endsWith("Z") ? isoString : isoString + "Z";
+  return new Date(s).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
