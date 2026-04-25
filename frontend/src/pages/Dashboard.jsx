@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchCalls, fetchMoodHistory, fetchMemories } from "../api";
+import { fetchUsers, fetchCalls, fetchMoodHistory, fetchMemories } from "../api";
 import Header from "../components/Header";
 import StatusCard from "../components/StatusCard";
 import AlertBanner from "../components/AlertBanner";
@@ -16,7 +16,13 @@ function formatUpdatedAt(date) {
   });
 }
 
+function getUrlUserId() {
+  return new URLSearchParams(window.location.search).get("user");
+}
+
 export default function Dashboard() {
+  const [users, setUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState(null);
   const [calls, setCalls] = useState([]);
   const [moodHistory, setMoodHistory] = useState([]);
   const [memories, setMemories] = useState([]);
@@ -24,14 +30,29 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef(null);
+  const userIdRef = useRef(null);
 
-  async function load(isManual = false) {
+  useEffect(() => {
+    fetchUsers()
+      .then((list) => {
+        setUsers(list);
+        const urlId = getUrlUserId();
+        const match = list.find((u) => u.user_id === urlId);
+        const initial = match ? urlId : list[0]?.user_id;
+        setSelectedUserId(initial);
+        userIdRef.current = initial;
+      })
+      .catch(() => setError("Could not reach the Aria backend. Is it running?"));
+  }, []);
+
+  async function load(isManual = false, userId = userIdRef.current) {
+    if (!userId) return;
     if (isManual) setRefreshing(true);
     try {
       const [c, m, mem] = await Promise.all([
-        fetchCalls(),
-        fetchMoodHistory(),
-        fetchMemories(),
+        fetchCalls(userId),
+        fetchMoodHistory(userId),
+        fetchMemories(userId),
       ]);
       setCalls(c);
       setMoodHistory(m);
@@ -57,7 +78,13 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    load();
+    if (!selectedUserId) return;
+    userIdRef.current = selectedUserId;
+    const url = new URL(window.location);
+    url.searchParams.set("user", selectedUserId);
+    window.history.replaceState({}, "", url);
+
+    load(false, selectedUserId);
     startPolling();
 
     const onVisibility = () => {
@@ -74,11 +101,20 @@ export default function Dashboard() {
       stopPolling();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [selectedUserId]);
+
+  const selectedUser = users.find((u) => u.user_id === selectedUserId);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header lastUpdated={lastUpdated} onRefresh={() => load(true)} refreshing={refreshing} />
+      <Header
+        user={selectedUser}
+        users={users}
+        onSelectUser={(id) => setSelectedUserId(id)}
+        lastUpdated={lastUpdated}
+        onRefresh={() => load(true)}
+        refreshing={refreshing}
+      />
 
       <main className="max-w-4xl mx-auto px-6 py-8 space-y-6">
         {error && (

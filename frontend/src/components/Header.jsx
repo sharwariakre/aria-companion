@@ -1,9 +1,23 @@
-export default function Header({ lastUpdated, onRefresh, refreshing }) {
+export default function Header({ user, users, onSelectUser, lastUpdated, onRefresh, refreshing }) {
   return (
     <header className="border-b border-gray-200 bg-white px-6 py-4 flex items-center justify-between">
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Aria</h1>
-        <p className="text-sm text-gray-500">Margaret's Companion</p>
+        {users?.length > 1 ? (
+          <select
+            className="text-sm text-gray-500 mt-0.5 border-none bg-transparent cursor-pointer focus:outline-none"
+            value={user?.user_id ?? ""}
+            onChange={(e) => onSelectUser(e.target.value)}
+          >
+            {users.map((u) => (
+              <option key={u.user_id} value={u.user_id}>
+                {u.name}'s Companion
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="text-sm text-gray-500">{user?.name ? `${user.name}'s Companion` : "Companion"}</p>
+        )}
       </div>
       <div className="flex items-center gap-3">
         {lastUpdated && (
