@@ -66,7 +66,12 @@ async def transcribe_url(
 
 
 def _transcribe_bytes(audio_bytes: bytes) -> str:
-    """Synchronous transcription — runs in a thread pool via asyncio.to_thread."""
+    """Synchronous transcription — runs in a thread pool via asyncio.to_thread.
+
+    If the first pass returns empty and the audio is long enough to contain
+    speech, retry with less aggressive VAD (no_speech_threshold=0.3) to
+    catch short utterances like "yes", "no", "I'm fine".
+    """
     model = _get_model()
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -78,10 +83,24 @@ def _transcribe_bytes(audio_bytes: bytes) -> str:
             tmp_path,
             beam_size=5,
             language="en",
-            vad_filter=True,             # filter out silence/noise
+            vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 500},
         )
         text = " ".join(seg.text.strip() for seg in segments).strip()
+
+        # Retry with relaxed VAD if empty but audio is long enough to have speech
+        if not text and info.duration > 0.5:
+            logger.info(f"Empty transcript on {info.duration:.1f}s audio — retrying with relaxed VAD")
+            segments, info = model.transcribe(
+                tmp_path,
+                beam_size=5,
+                language="en",
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 500},
+                no_speech_threshold=0.3,
+            )
+            text = " ".join(seg.text.strip() for seg in segments).strip()
+
         logger.info(f"Transcription ({info.language}, {info.duration:.1f}s): '{text}'")
         return text
     finally:
