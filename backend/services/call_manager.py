@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 MAX_TURNS = 12
-SILENCE_TIMEOUT = 6
+SILENCE_TIMEOUT = 8
 MAX_RECORD_SECONDS = 60
 MOOD_ALERT_THRESHOLD = 0.35   # flag if mood drops below this vs baseline
 

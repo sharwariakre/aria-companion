@@ -47,6 +47,7 @@ async def init_db() -> None:
             "ALTER TABLE calls ADD COLUMN IF NOT EXISTS contradiction_flag BOOLEAN DEFAULT FALSE",
             "ALTER TABLE calls ADD COLUMN IF NOT EXISTS is_retry BOOLEAN DEFAULT FALSE",
             "ALTER TABLE calls ADD COLUMN IF NOT EXISTS missed BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE memories ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE",
         ]
         for sql in migrations:
             await conn.execute(__import__("sqlalchemy").text(sql))

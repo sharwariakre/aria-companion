@@ -86,6 +86,24 @@ async def extract_and_store_memories(
         if not fact:
             continue
         embedding = await asyncio.to_thread(_embed, fact)
+
+        # Skip near-duplicates (cosine distance < 0.1 means similarity > 0.9)
+        embedding_str = "[" + ",".join(f"{x:.8f}" for x in embedding) + "]"
+        dup = await db.execute(
+            text("""
+                SELECT id FROM memories
+                WHERE user_id = :user_id
+                  AND active = TRUE
+                  AND embedding IS NOT NULL
+                  AND (embedding <=> CAST(:embedding AS vector)) < 0.1
+                LIMIT 1
+            """),
+            {"user_id": str(user_id), "embedding": embedding_str},
+        )
+        if dup.fetchone():
+            logger.info(f"Skipping near-duplicate memory: '{fact[:60]}'")
+            continue
+
         db.add(Memory(
             user_id=user_id,
             source_call_id=call_id,
@@ -114,6 +132,7 @@ async def get_recent_memories(
             SELECT content
             FROM memories
             WHERE user_id = :user_id
+              AND active = TRUE
             ORDER BY created_at DESC
             LIMIT :top_k
         """),
@@ -149,6 +168,7 @@ async def get_relevant_memories(
             SELECT content
             FROM memories
             WHERE user_id = :user_id
+              AND active = TRUE
               AND embedding IS NOT NULL
             ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT :top_k
