@@ -40,6 +40,8 @@ function CustomTooltip({ active, payload }) {
   );
 }
 
+const MIN_CALLS_FOR_BASELINE = 3;
+
 export default function MoodChart({ data }) {
   if (!data?.length) {
     return (
@@ -50,7 +52,32 @@ export default function MoodChart({ data }) {
     );
   }
 
-  const chartData = data.map((d) => ({
+  const scoredCalls = data.filter((d) => d.mood_score !== null && d.mood_score !== undefined);
+  const isCalibrating = scoredCalls.length < MIN_CALLS_FOR_BASELINE;
+
+  if (isCalibrating) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg p-5">
+        <p className="text-sm font-medium text-gray-700 mb-4">7-Day Mood Trend</p>
+        <div className="text-center py-8">
+          <p className="text-sm text-gray-500">Calibrating baseline…</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {scoredCalls.length} / {MIN_CALLS_FOR_BASELINE} calls recorded — scores will appear once the baseline is ready
+          </p>
+          <div className="flex justify-center gap-1.5 mt-4">
+            {Array.from({ length: MIN_CALLS_FOR_BASELINE }).map((_, i) => (
+              <div
+                key={i}
+                className={`w-3 h-3 rounded-full ${i < scoredCalls.length ? "bg-blue-400" : "bg-gray-200"}`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const chartData = scoredCalls.map((d) => ({
     ...d,
     date: formatDate(d.started_at),
     mood_score: d.mood_score,
