@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchCalls, fetchMoodHistory, fetchMemories } from "../api";
 import Header from "../components/Header";
 import StatusCard from "../components/StatusCard";
 import AlertBanner from "../components/AlertBanner";
 import MoodChart from "../components/MoodChart";
 import MemoryFeed from "../components/MemoryFeed";
+
+const POLL_INTERVAL = 60_000;
 
 function formatUpdatedAt(date) {
   return date.toLocaleTimeString("en-US", {
@@ -20,8 +22,11 @@ export default function Dashboard() {
   const [memories, setMemories] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const intervalRef = useRef(null);
 
-  async function load() {
+  async function load(isManual = false) {
+    if (isManual) setRefreshing(true);
     try {
       const [c, m, mem] = await Promise.all([
         fetchCalls(),
@@ -35,16 +40,45 @@ export default function Dashboard() {
       setError(null);
     } catch (e) {
       setError("Could not reach the Aria backend. Is it running?");
+    } finally {
+      if (isManual) setRefreshing(false);
     }
+  }
+
+  function startPolling() {
+    stopPolling();
+    intervalRef.current = setInterval(() => {
+      if (!document.hidden) load();
+    }, POLL_INTERVAL);
+  }
+
+  function stopPolling() {
+    if (intervalRef.current) clearInterval(intervalRef.current);
   }
 
   useEffect(() => {
     load();
+    startPolling();
+
+    const onVisibility = () => {
+      if (!document.hidden) {
+        load();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header lastUpdated={lastUpdated} />
+      <Header lastUpdated={lastUpdated} onRefresh={() => load(true)} refreshing={refreshing} />
 
       <main className="max-w-4xl mx-auto px-6 py-8 space-y-6">
         {error && (
