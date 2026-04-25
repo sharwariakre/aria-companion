@@ -14,7 +14,7 @@ const ALERT_THRESHOLD = 0.35;
 
 function formatDate(isoString) {
   if (!isoString) return "";
-  const d = new Date(isoString);
+  const d = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
