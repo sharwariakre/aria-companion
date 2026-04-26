@@ -24,7 +24,7 @@ def _get_model():
     from faster_whisper import WhisperModel
 
     logger.info("Loading Whisper base.en model (first-time load)…")
-    model = WhisperModel("base.en", device="cpu", compute_type="int8")
+    model = WhisperModel("small.en", device="cpu", compute_type="int8")
     logger.info("Whisper model ready.")
     return model
 
