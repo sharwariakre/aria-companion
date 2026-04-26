@@ -171,4 +171,9 @@ async def generate_opening(user_name: str, memories: str = "", prev_opening: str
         )
 
     messages = [{"role": "user", "content": opening_instruction}]
-    return await chat(messages, user_name=user_name, memories=memories)
+    resp = await chat(messages, user_name=user_name, memories=memories)
+
+    # If Ollama was down, the generic error fallback is a bad opening line — replace it
+    if resp.text.startswith("I'm sorry, I had a little trouble"):
+        resp.text = f"Hello {user_name}, it's Aria! How are you feeling today?"
+    return resp
