@@ -33,11 +33,6 @@ async def check_ngrok_health() -> bool:
 
     if not up and _was_up:
         logger.warning("ngrok tunnel is unreachable — calls will fail until it's restored.")
-        from services import escalation as escalation_service
-        escalation_service.send_alert(
-            "System",
-            "Aria's ngrok tunnel may be down — calls will fail until it's restored.",
-        )
 
     _was_up = up
     return up
