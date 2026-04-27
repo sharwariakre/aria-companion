@@ -12,6 +12,7 @@ Responsibilities:
 import asyncio
 import logging
 import os
+import time
 import uuid
 from datetime import datetime
 
@@ -28,6 +29,10 @@ from services import memory_service
 from services import mood as mood_service
 from services import stt as stt_service
 from services import tts as tts_service
+from services.metrics import (
+    ACTIVE_CALLS, CALLS_TOTAL, ESCALATIONS_TOTAL,
+    MOOD_SCORE, STT_LATENCY, LLM_LATENCY, TTS_LATENCY, TOTAL_TURN_LATENCY,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -160,13 +165,18 @@ async def build_turn_response(
     if settings.twilio_account_sid and settings.twilio_auth_token:
         auth = (settings.twilio_account_sid, settings.twilio_auth_token)
 
+    ACTIVE_CALLS.inc()
+    turn_start = time.perf_counter()
+
     # Save recording for mood analysis later
     turn_num = (call.turn_count or 0) + 1
     recording_save_path = _recording_path(call.id, turn_num)
 
+    stt_start = time.perf_counter()
     transcript = await stt_service.transcribe_url(
         recording_url, twilio_auth=auth, save_path=recording_save_path
     )
+    STT_LATENCY.observe(time.perf_counter() - stt_start)
     logger.info(f"User said: '{transcript}'  (call={call.id}  turn={turn_num})")
 
     # Detect user-initiated goodbye so Aria wraps up naturally
@@ -180,7 +190,9 @@ async def build_turn_response(
     call.turn_count = turn_num
 
     memories = call.retrieved_memories or ""
+    llm_start = time.perf_counter()
     llm_resp = await llm_service.chat(messages, user_name=user.name, memories=memories)
+    LLM_LATENCY.observe(time.perf_counter() - llm_start)
     logger.info(f"Aria: '{llm_resp.text}'  end={llm_resp.should_end}  escalate={llm_resp.should_escalate}")
 
     messages.append({"role": "assistant", "content": llm_resp.text})
@@ -188,6 +200,7 @@ async def build_turn_response(
 
     if llm_resp.should_escalate:
         call.flagged = True
+        ESCALATIONS_TOTAL.labels(reason="mid_call").inc()
         escalation_service.send_alert(
             user.name,
             "They mentioned something concerning during their call — please check in immediately.",
@@ -195,7 +208,9 @@ async def build_turn_response(
 
     await db.commit()
 
+    tts_start = time.perf_counter()
     filename = await tts_service.synthesise(llm_resp.text)
+    TTS_LATENCY.observe(time.perf_counter() - tts_start)
     play_url = tts_service.audio_url(filename)
 
     twiml = VoiceResponse()
@@ -229,6 +244,8 @@ async def build_turn_response(
         )
         twiml.redirect(turn_url, method="POST")
 
+    TOTAL_TURN_LATENCY.observe(time.perf_counter() - turn_start)
+    ACTIVE_CALLS.dec()
     return twiml
 
 
@@ -336,9 +353,13 @@ async def _score_and_save_mood(call: Call, user: User | None, db: AsyncSession) 
         call.masking_detected = sentiment.get("masking_detected", False)
         call.contradiction_flag = contradiction
 
+        MOOD_SCORE.observe(score)
+        CALLS_TOTAL.labels(outcome="completed").inc()
+
         # Escalate on significant mood dip (only once we have a real baseline)
         if baseline is not None and score < MOOD_ALERT_THRESHOLD:
             call.flagged = True
+            ESCALATIONS_TOTAL.labels(reason="low_mood").inc()
             escalation_service.send_alert(
                 user.name if user else "the user",
                 f"Their mood score today was {score:.2f}, notably lower than their recent baseline.",
@@ -346,6 +367,7 @@ async def _score_and_save_mood(call: Call, user: User | None, db: AsyncSession) 
 
         # Alert if Aria detected emotional masking (saying fine but showing signs of distress)
         if call.masking_detected and user:
+            ESCALATIONS_TOTAL.labels(reason="masking").inc()
             escalation_service.send_alert(
                 user.name,
                 f"Aria noticed {user.name} may be downplaying how they feel. "

@@ -19,6 +19,7 @@ Use _get_embedder() directly during startup pre-warm.
 
 import asyncio
 import logging
+import time
 import uuid
 from functools import lru_cache
 
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from models.user import Memory
+from services.metrics import MEMORIES_RETRIEVED, MEMORY_RETRIEVAL_LATENCY
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -158,11 +160,9 @@ async def get_relevant_memories(
     Returns a formatted bullet string, or empty string if no memories exist.
     """
     embedding = await asyncio.to_thread(_embed, context)
-    # pgvector expects the vector as a string literal: '[0.1, 0.2, ...]'
     embedding_str = "[" + ",".join(f"{x:.8f}" for x in embedding) + "]"
 
-    # Use sqlalchemy text() — asyncpg handles the raw SQL fine.
-    # <=> is cosine distance in pgvector (lower = more similar).
+    t0 = time.perf_counter()
     result = await db.execute(
         text("""
             SELECT content
@@ -179,10 +179,12 @@ async def get_relevant_memories(
             "top_k": top_k,
         },
     )
+    MEMORY_RETRIEVAL_LATENCY.observe(time.perf_counter() - t0)
     rows = result.fetchall()
     if not rows:
         return ""
 
+    MEMORIES_RETRIEVED.observe(len(rows))
     formatted = "\n".join(f"- {row[0]}" for row in rows)
     logger.info(f"Retrieved {len(rows)} memories for user={user_id}.")
     return formatted

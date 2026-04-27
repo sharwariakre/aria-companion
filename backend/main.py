@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from config import get_settings
 from db.database import init_db
@@ -115,7 +116,16 @@ async def lifespan(app: FastAPI):
     await _reconcile_open_calls()
 
     from services.scheduler import scheduler, schedule_all_users
+    from services.health import check_ngrok_health
+    from apscheduler.triggers.interval import IntervalTrigger
+
     await schedule_all_users()
+    scheduler.add_job(
+        check_ngrok_health,
+        trigger=IntervalTrigger(seconds=60),
+        id="ngrok_health_check",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info("Scheduler started.")
 
@@ -131,6 +141,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
