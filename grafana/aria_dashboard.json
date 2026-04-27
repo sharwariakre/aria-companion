@@ -3,8 +3,8 @@
   "uid": "aria-companion",
   "schemaVersion": 38,
   "version": 1,
-  "refresh": "30s",
-  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
   "panels": [
     {
       "id": 1,
@@ -13,35 +13,35 @@
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, rate(aria_stt_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(aria_stt_latency_seconds_bucket[1h]))",
           "legendFormat": "STT p50"
         },
         {
-          "expr": "histogram_quantile(0.95, rate(aria_stt_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(aria_stt_latency_seconds_bucket[1h]))",
           "legendFormat": "STT p95"
         },
         {
-          "expr": "histogram_quantile(0.50, rate(aria_llm_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(aria_llm_latency_seconds_bucket[1h]))",
           "legendFormat": "LLM p50"
         },
         {
-          "expr": "histogram_quantile(0.95, rate(aria_llm_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(aria_llm_latency_seconds_bucket[1h]))",
           "legendFormat": "LLM p95"
         },
         {
-          "expr": "histogram_quantile(0.50, rate(aria_tts_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(aria_tts_latency_seconds_bucket[1h]))",
           "legendFormat": "TTS p50"
         },
         {
-          "expr": "histogram_quantile(0.95, rate(aria_tts_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(aria_tts_latency_seconds_bucket[1h]))",
           "legendFormat": "TTS p95"
         },
         {
-          "expr": "histogram_quantile(0.50, rate(aria_turn_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(aria_turn_latency_seconds_bucket[1h]))",
           "legendFormat": "Turn total p50"
         },
         {
-          "expr": "histogram_quantile(0.95, rate(aria_turn_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(aria_turn_latency_seconds_bucket[1h]))",
           "legendFormat": "Turn total p95"
         }
       ],
@@ -120,7 +120,7 @@
       "gridPos": { "x": 14, "y": 8, "w": 10, "h": 8 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(aria_memory_retrieval_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(aria_memory_retrieval_latency_seconds_bucket[1h]))",
           "legendFormat": "p95"
         }
       ],
