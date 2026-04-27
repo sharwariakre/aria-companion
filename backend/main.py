@@ -105,6 +105,9 @@ async def lifespan(app: FastAPI):
     logger.info("Initialising database…")
     await init_db()
 
+    from services.metrics import ACTIVE_CALLS
+    ACTIVE_CALLS.set(0)
+
     audio_dir = settings.audio_dir
     os.makedirs(audio_dir, exist_ok=True)
     os.makedirs(os.path.join(audio_dir, "recordings"), exist_ok=True)

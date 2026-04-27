@@ -168,85 +168,87 @@ async def build_turn_response(
     ACTIVE_CALLS.inc()
     turn_start = time.perf_counter()
 
-    # Save recording for mood analysis later
-    turn_num = (call.turn_count or 0) + 1
-    recording_save_path = _recording_path(call.id, turn_num)
+    try:
+        # Save recording for mood analysis later
+        turn_num = (call.turn_count or 0) + 1
+        recording_save_path = _recording_path(call.id, turn_num)
 
-    stt_start = time.perf_counter()
-    transcript = await stt_service.transcribe_url(
-        recording_url, twilio_auth=auth, save_path=recording_save_path
-    )
-    STT_LATENCY.observe(time.perf_counter() - stt_start)
-    logger.info(f"User said: '{transcript}'  (call={call.id}  turn={turn_num})")
-
-    # Detect user-initiated goodbye so Aria wraps up naturally
-    _goodbye_phrases = {"bye", "goodbye", "good bye", "talk later", "got to go", "gotta go", "take care", "have a good day"}
-    user_said_bye = any(phrase in transcript.lower() for phrase in _goodbye_phrases) if transcript else False
-
-    messages = list(call.messages or [])
-    if transcript:
-        messages.append({"role": "user", "content": transcript})
-
-    call.turn_count = turn_num
-
-    memories = call.retrieved_memories or ""
-    llm_start = time.perf_counter()
-    llm_resp = await llm_service.chat(messages, user_name=user.name, memories=memories)
-    LLM_LATENCY.observe(time.perf_counter() - llm_start)
-    logger.info(f"Aria: '{llm_resp.text}'  end={llm_resp.should_end}  escalate={llm_resp.should_escalate}")
-
-    messages.append({"role": "assistant", "content": llm_resp.text})
-    call.messages = messages
-
-    if llm_resp.should_escalate:
-        call.flagged = True
-        ESCALATIONS_TOTAL.labels(reason="mid_call").inc()
-        escalation_service.send_alert(
-            user.name,
-            "They mentioned something concerning during their call — please check in immediately.",
+        stt_start = time.perf_counter()
+        transcript = await stt_service.transcribe_url(
+            recording_url, twilio_auth=auth, save_path=recording_save_path
         )
+        STT_LATENCY.observe(time.perf_counter() - stt_start)
+        logger.info(f"User said: '{transcript}'  (call={call.id}  turn={turn_num})")
 
-    await db.commit()
+        # Detect user-initiated goodbye so Aria wraps up naturally
+        _goodbye_phrases = {"bye", "goodbye", "good bye", "talk later", "got to go", "gotta go", "take care", "have a good day"}
+        user_said_bye = any(phrase in transcript.lower() for phrase in _goodbye_phrases) if transcript else False
 
-    tts_start = time.perf_counter()
-    filename = await tts_service.synthesise(llm_resp.text)
-    TTS_LATENCY.observe(time.perf_counter() - tts_start)
-    play_url = tts_service.audio_url(filename)
+        messages = list(call.messages or [])
+        if transcript:
+            messages.append({"role": "user", "content": transcript})
 
-    twiml = VoiceResponse()
-    twiml.play(play_url)
+        call.turn_count = turn_num
 
-    # Don't end mid-conversation if Aria just asked a question
-    ends_with_question = llm_resp.text.rstrip().endswith("?")
-    should_hang_up = (
-        (llm_resp.should_end and not ends_with_question)
-        or user_said_bye
-        or call.turn_count >= MAX_TURNS
-    )
+        memories = call.retrieved_memories or ""
+        llm_start = time.perf_counter()
+        llm_resp = await llm_service.chat(messages, user_name=user.name, memories=memories)
+        LLM_LATENCY.observe(time.perf_counter() - llm_start)
+        logger.info(f"Aria: '{llm_resp.text}'  end={llm_resp.should_end}  escalate={llm_resp.should_escalate}")
 
-    if should_hang_up:
-        if not llm_resp.should_end:
-            farewell = await tts_service.synthesise(
-                f"It was so lovely talking with you today, {user.name}. "
-                "Take care, and I'll call again soon."
+        messages.append({"role": "assistant", "content": llm_resp.text})
+        call.messages = messages
+
+        if llm_resp.should_escalate:
+            call.flagged = True
+            ESCALATIONS_TOTAL.labels(reason="mid_call").inc()
+            escalation_service.send_alert(
+                user.name,
+                "They mentioned something concerning during their call — please check in immediately.",
             )
-            twiml.play(tts_service.audio_url(farewell))
-        twiml.hangup()
-    else:
-        turn_url = _turn_url(user.id, call.id)
-        twiml.record(
-            action=turn_url,
-            method="POST",
-            timeout=SILENCE_TIMEOUT,
-            max_length=MAX_RECORD_SECONDS,
-            play_beep=False,
-            transcribe=False,
-        )
-        twiml.redirect(turn_url, method="POST")
 
-    TOTAL_TURN_LATENCY.observe(time.perf_counter() - turn_start)
-    ACTIVE_CALLS.dec()
-    return twiml
+        await db.commit()
+
+        tts_start = time.perf_counter()
+        filename = await tts_service.synthesise(llm_resp.text)
+        TTS_LATENCY.observe(time.perf_counter() - tts_start)
+        play_url = tts_service.audio_url(filename)
+
+        twiml = VoiceResponse()
+        twiml.play(play_url)
+
+        # Don't end mid-conversation if Aria just asked a question
+        ends_with_question = llm_resp.text.rstrip().endswith("?")
+        should_hang_up = (
+            (llm_resp.should_end and not ends_with_question)
+            or user_said_bye
+            or call.turn_count >= MAX_TURNS
+        )
+
+        if should_hang_up:
+            if not llm_resp.should_end:
+                farewell = await tts_service.synthesise(
+                    f"It was so lovely talking with you today, {user.name}. "
+                    "Take care, and I'll call again soon."
+                )
+                twiml.play(tts_service.audio_url(farewell))
+            twiml.hangup()
+        else:
+            turn_url = _turn_url(user.id, call.id)
+            twiml.record(
+                action=turn_url,
+                method="POST",
+                timeout=SILENCE_TIMEOUT,
+                max_length=MAX_RECORD_SECONDS,
+                play_beep=False,
+                transcribe=False,
+            )
+            twiml.redirect(turn_url, method="POST")
+
+        TOTAL_TURN_LATENCY.observe(time.perf_counter() - turn_start)
+        return twiml
+    finally:
+        ACTIVE_CALLS.dec()
 
 
 # ---------------------------------------------------------------------------
