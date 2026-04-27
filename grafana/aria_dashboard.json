@@ -2,7 +2,7 @@
   "title": "Aria Companion",
   "uid": "aria-companion",
   "schemaVersion": 38,
-  "version": 2,
+  "version": 3,
   "refresh": "5m",
   "time": { "from": "now-7d", "to": "now" },
   "panels": [
@@ -10,16 +10,17 @@
       "id": 1,
       "title": "Pipeline Latency (p50 / p95)",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "histogram_quantile(0.50, rate(aria_stt_latency_seconds_bucket[1h]))", "legendFormat": "STT p50" },
-        { "expr": "histogram_quantile(0.95, rate(aria_stt_latency_seconds_bucket[1h]))", "legendFormat": "STT p95" },
-        { "expr": "histogram_quantile(0.50, rate(aria_llm_latency_seconds_bucket[1h]))", "legendFormat": "LLM p50" },
-        { "expr": "histogram_quantile(0.95, rate(aria_llm_latency_seconds_bucket[1h]))", "legendFormat": "LLM p95" },
-        { "expr": "histogram_quantile(0.50, rate(aria_tts_latency_seconds_bucket[1h]))", "legendFormat": "TTS p50" },
-        { "expr": "histogram_quantile(0.95, rate(aria_tts_latency_seconds_bucket[1h]))", "legendFormat": "TTS p95" },
-        { "expr": "histogram_quantile(0.50, rate(aria_turn_latency_seconds_bucket[1h]))", "legendFormat": "Turn p50" },
-        { "expr": "histogram_quantile(0.95, rate(aria_turn_latency_seconds_bucket[1h]))", "legendFormat": "Turn p95" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, rate(aria_stt_latency_seconds_bucket[1h]))", "legendFormat": "STT p50" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, rate(aria_stt_latency_seconds_bucket[1h]))", "legendFormat": "STT p95" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, rate(aria_llm_latency_seconds_bucket[1h]))", "legendFormat": "LLM p50" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, rate(aria_llm_latency_seconds_bucket[1h]))", "legendFormat": "LLM p95" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, rate(aria_tts_latency_seconds_bucket[1h]))", "legendFormat": "TTS p50" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, rate(aria_tts_latency_seconds_bucket[1h]))", "legendFormat": "TTS p95" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, rate(aria_turn_latency_seconds_bucket[1h]))", "legendFormat": "Turn p50" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, rate(aria_turn_latency_seconds_bucket[1h]))", "legendFormat": "Turn p95" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
@@ -30,9 +31,10 @@
       "id": 2,
       "title": "Call Outcomes (last 7d)",
       "type": "barchart",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "increase(aria_calls_total[7d])", "legendFormat": "{{outcome}}", "instant": true }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(aria_calls_total[7d])", "legendFormat": "{{outcome}}", "instant": true }
       ],
       "fieldConfig": {
         "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
@@ -43,9 +45,10 @@
       "id": 3,
       "title": "Active Calls",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 0, "y": 8, "w": 4, "h": 4 },
       "targets": [
-        { "expr": "aria_active_calls", "instant": true, "legendFormat": "Active" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "aria_active_calls", "instant": true, "legendFormat": "Active" }
       ],
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"] },
@@ -70,9 +73,10 @@
       "id": 4,
       "title": "Mood Score Distribution",
       "type": "barchart",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 4, "y": 8, "w": 10, "h": 8 },
       "targets": [
-        { "expr": "increase(aria_mood_score_bucket[7d])", "legendFormat": "≤{{le}}", "instant": true }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(aria_mood_score_bucket[7d])", "legendFormat": "≤{{le}}", "instant": true }
       ],
       "fieldConfig": {
         "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
@@ -82,9 +86,10 @@
       "id": 5,
       "title": "Memory Retrieval Latency (p95)",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 14, "y": 8, "w": 10, "h": 8 },
       "targets": [
-        { "expr": "histogram_quantile(0.95, rate(aria_memory_retrieval_latency_seconds_bucket[1h]))", "legendFormat": "p95" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, rate(aria_memory_retrieval_latency_seconds_bucket[1h]))", "legendFormat": "p95" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "s", "color": { "fixedColor": "purple", "mode": "fixed" } }
@@ -94,9 +99,10 @@
       "id": 6,
       "title": "ngrok Tunnel",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 0, "y": 12, "w": 4, "h": 4 },
       "targets": [
-        { "expr": "aria_ngrok_up", "instant": true, "legendFormat": "Tunnel" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "aria_ngrok_up", "instant": true, "legendFormat": "Tunnel" }
       ],
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"] },

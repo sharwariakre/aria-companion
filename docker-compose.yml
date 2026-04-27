@@ -58,6 +58,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=aria
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/aria_dashboard.json:/var/lib/grafana/dashboards/aria_dashboard.json
     depends_on:
       - prometheus
     restart: unless-stopped
