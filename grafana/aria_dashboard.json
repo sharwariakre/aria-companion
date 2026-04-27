@@ -1,0 +1,163 @@
+{
+  "title": "Aria Companion",
+  "uid": "aria-companion",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Pipeline Latency (p50 / p95)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(aria_stt_latency_seconds_bucket[5m]))",
+          "legendFormat": "STT p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(aria_stt_latency_seconds_bucket[5m]))",
+          "legendFormat": "STT p95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(aria_llm_latency_seconds_bucket[5m]))",
+          "legendFormat": "LLM p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(aria_llm_latency_seconds_bucket[5m]))",
+          "legendFormat": "LLM p95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(aria_tts_latency_seconds_bucket[5m]))",
+          "legendFormat": "TTS p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(aria_tts_latency_seconds_bucket[5m]))",
+          "legendFormat": "TTS p95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(aria_turn_latency_seconds_bucket[5m]))",
+          "legendFormat": "Turn total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(aria_turn_latency_seconds_bucket[5m]))",
+          "legendFormat": "Turn total p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Call Outcomes",
+      "type": "barchart",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "increase(aria_calls_total[24h])",
+          "legendFormat": "{{ outcome }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Active Calls",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 8, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "aria_active_calls",
+          "legendFormat": "Active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Mood Score Distribution",
+      "type": "histogram",
+      "gridPos": { "x": 4, "y": 8, "w": 10, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(aria_mood_score_bucket[24h])",
+          "legendFormat": "{{ le }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Memory Retrieval Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "x": 14, "y": 8, "w": 10, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(aria_memory_retrieval_latency_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "fixedColor": "purple", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "ngrok Tunnel Status",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 12, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "aria_ngrok_up",
+          "legendFormat": "Tunnel"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "background" }
+    }
+  ]
+}
