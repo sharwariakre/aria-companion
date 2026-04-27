@@ -2,7 +2,7 @@
   "title": "Aria Companion",
   "uid": "aria-companion",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "5m",
   "time": { "from": "now-7d", "to": "now" },
   "panels": [
@@ -12,63 +12,32 @@
       "type": "timeseries",
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "targets": [
-        {
-          "expr": "histogram_quantile(0.50, rate(aria_stt_latency_seconds_bucket[1h]))",
-          "legendFormat": "STT p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(aria_stt_latency_seconds_bucket[1h]))",
-          "legendFormat": "STT p95"
-        },
-        {
-          "expr": "histogram_quantile(0.50, rate(aria_llm_latency_seconds_bucket[1h]))",
-          "legendFormat": "LLM p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(aria_llm_latency_seconds_bucket[1h]))",
-          "legendFormat": "LLM p95"
-        },
-        {
-          "expr": "histogram_quantile(0.50, rate(aria_tts_latency_seconds_bucket[1h]))",
-          "legendFormat": "TTS p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(aria_tts_latency_seconds_bucket[1h]))",
-          "legendFormat": "TTS p95"
-        },
-        {
-          "expr": "histogram_quantile(0.50, rate(aria_turn_latency_seconds_bucket[1h]))",
-          "legendFormat": "Turn total p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(aria_turn_latency_seconds_bucket[1h]))",
-          "legendFormat": "Turn total p95"
-        }
+        { "expr": "histogram_quantile(0.50, rate(aria_stt_latency_seconds_bucket[1h]))", "legendFormat": "STT p50" },
+        { "expr": "histogram_quantile(0.95, rate(aria_stt_latency_seconds_bucket[1h]))", "legendFormat": "STT p95" },
+        { "expr": "histogram_quantile(0.50, rate(aria_llm_latency_seconds_bucket[1h]))", "legendFormat": "LLM p50" },
+        { "expr": "histogram_quantile(0.95, rate(aria_llm_latency_seconds_bucket[1h]))", "legendFormat": "LLM p95" },
+        { "expr": "histogram_quantile(0.50, rate(aria_tts_latency_seconds_bucket[1h]))", "legendFormat": "TTS p50" },
+        { "expr": "histogram_quantile(0.95, rate(aria_tts_latency_seconds_bucket[1h]))", "legendFormat": "TTS p95" },
+        { "expr": "histogram_quantile(0.50, rate(aria_turn_latency_seconds_bucket[1h]))", "legendFormat": "Turn p50" },
+        { "expr": "histogram_quantile(0.95, rate(aria_turn_latency_seconds_bucket[1h]))", "legendFormat": "Turn p95" }
       ],
       "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "color": { "mode": "palette-classic" }
-        }
-      }
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
     },
     {
       "id": 2,
-      "title": "Call Outcomes",
+      "title": "Call Outcomes (last 7d)",
       "type": "barchart",
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "targets": [
-        {
-          "expr": "increase(aria_calls_total[24h])",
-          "legendFormat": "{{ outcome }}"
-        }
+        { "expr": "increase(aria_calls_total[7d])", "legendFormat": "{{outcome}}", "instant": true }
       ],
       "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": { "mode": "palette-classic" }
-        }
-      }
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+      },
+      "options": { "xTickLabelRotation": 0, "groupWidth": 0.7 }
     },
     {
       "id": 3,
@@ -76,11 +45,13 @@
       "type": "stat",
       "gridPos": { "x": 0, "y": 8, "w": 4, "h": 4 },
       "targets": [
-        {
-          "expr": "aria_active_calls",
-          "legendFormat": "Active"
-        }
+        { "expr": "aria_active_calls", "instant": true, "legendFormat": "Active" }
       ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -98,19 +69,13 @@
     {
       "id": 4,
       "title": "Mood Score Distribution",
-      "type": "histogram",
+      "type": "barchart",
       "gridPos": { "x": 4, "y": 8, "w": 10, "h": 8 },
       "targets": [
-        {
-          "expr": "rate(aria_mood_score_bucket[24h])",
-          "legendFormat": "{{ le }}"
-        }
+        { "expr": "increase(aria_mood_score_bucket[7d])", "legendFormat": "≤{{le}}", "instant": true }
       ],
       "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": { "mode": "palette-classic" }
-        }
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
       }
     },
     {
@@ -119,29 +84,25 @@
       "type": "timeseries",
       "gridPos": { "x": 14, "y": 8, "w": 10, "h": 8 },
       "targets": [
-        {
-          "expr": "histogram_quantile(0.95, rate(aria_memory_retrieval_latency_seconds_bucket[1h]))",
-          "legendFormat": "p95"
-        }
+        { "expr": "histogram_quantile(0.95, rate(aria_memory_retrieval_latency_seconds_bucket[1h]))", "legendFormat": "p95" }
       ],
       "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "color": { "fixedColor": "purple", "mode": "fixed" }
-        }
+        "defaults": { "unit": "s", "color": { "fixedColor": "purple", "mode": "fixed" } }
       }
     },
     {
       "id": 6,
-      "title": "ngrok Tunnel Status",
+      "title": "ngrok Tunnel",
       "type": "stat",
       "gridPos": { "x": 0, "y": 12, "w": 4, "h": 4 },
       "targets": [
-        {
-          "expr": "aria_ngrok_up",
-          "legendFormat": "Tunnel"
-        }
+        { "expr": "aria_ngrok_up", "instant": true, "legendFormat": "Tunnel" }
       ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -156,8 +117,7 @@
             ]
           }
         }
-      },
-      "options": { "colorMode": "background" }
+      }
     }
   ]
 }
