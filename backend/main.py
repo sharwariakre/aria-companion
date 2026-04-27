@@ -99,6 +99,45 @@ async def _reconcile_open_calls():
             logger.warning(f"Reconcile failed for call={call.id}: {exc}")
 
 
+async def _seed_metrics_from_db():
+    """
+    Prime Prometheus counters/histograms from DB on startup so the 7-day
+    dashboard panels aren't empty after a backend restart.
+    Counters can only go up, so we add the DB totals as the starting offset.
+    """
+    from sqlalchemy import func, select
+    from db.database import AsyncSessionLocal
+    from models.user import Call
+    from services.metrics import CALLS_TOTAL, MOOD_SCORE, ESCALATIONS_TOTAL
+
+    async with AsyncSessionLocal() as db:
+        # Completed calls
+        completed = await db.scalar(
+            select(func.count()).where(Call.ended_at.isnot(None), Call.missed.is_(False))
+        )
+        missed = await db.scalar(
+            select(func.count()).where(Call.missed.is_(True))
+        )
+        escalated = await db.scalar(
+            select(func.count()).where(Call.flagged.is_(True))
+        )
+        if completed:
+            CALLS_TOTAL.labels(outcome="completed").inc(completed)
+        if missed:
+            CALLS_TOTAL.labels(outcome="missed").inc(missed)
+        if escalated:
+            ESCALATIONS_TOTAL.labels(reason="low_mood").inc(escalated)
+
+        # Seed mood histogram from stored scores
+        scores = await db.scalars(
+            select(Call.mood_score).where(Call.mood_score.isnot(None))
+        )
+        for score in scores:
+            MOOD_SCORE.observe(score)
+
+    logger.info(f"Metrics seeded from DB: completed={completed} missed={missed} escalated={escalated}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -117,6 +156,7 @@ async def lifespan(app: FastAPI):
     logger.info("All models loaded — Aria is ready to take calls.")
 
     await _reconcile_open_calls()
+    await _seed_metrics_from_db()
 
     from services.scheduler import scheduler, schedule_all_users
     from services.health import check_ngrok_health
@@ -131,6 +171,9 @@ async def lifespan(app: FastAPI):
     )
     scheduler.start()
     logger.info("Scheduler started.")
+
+    # Run immediately so the gauge reflects current tunnel state right away
+    await check_ngrok_health()
 
     yield
 

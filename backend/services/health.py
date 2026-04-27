@@ -1,30 +1,31 @@
 """
 ngrok tunnel health check — runs every 60 seconds via APScheduler.
 
-Pings GET {base_url}/health and updates the NGROK_UP gauge.
-Sends a Gmail alert if the tunnel goes down.
+Checks the ngrok local management API (http://localhost:4040/api/tunnels)
+to determine if an active tunnel exists. This avoids outbound TLS entirely
+and works reliably on macOS pyenv where the system SSL certs are broken.
 """
 
 import logging
 
 import httpx
 
-from config import get_settings
 from services.metrics import NGROK_UP
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 _was_up: bool = True  # track previous state to avoid repeated alerts
+
+NGROK_API = "http://localhost:4040/api/tunnels"
 
 
 async def check_ngrok_health() -> bool:
     global _was_up
-    url = settings.base_url.rstrip("/") + "/health"
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(url)
-            up = r.status_code == 200
+            r = await client.get(NGROK_API)
+            data = r.json()
+            up = bool(data.get("tunnels"))
     except Exception:
         up = False
 
