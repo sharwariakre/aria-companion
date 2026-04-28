@@ -98,15 +98,23 @@ async def trigger_outbound_call(user: User, db: AsyncSession, is_retry: bool = F
     webhook_url = f"{settings.base_url.rstrip('/')}/calls/webhook/{user.id}"
     status_url = f"{settings.base_url.rstrip('/')}/calls/status/{call_record.id}"
 
-    client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-    call = client.calls.create(
-        to=user.phone_number,
-        from_=settings.twilio_phone_number,
-        url=webhook_url,
-        status_callback=status_url,
-        status_callback_event=["completed", "failed", "busy", "no-answer"],
-        status_callback_method="POST",
-    )
+    twilio_client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+
+    def _place_call():
+        return twilio_client.calls.create(
+            to=user.phone_number,
+            from_=settings.twilio_phone_number,
+            url=webhook_url,
+            status_callback=status_url,
+            status_callback_event=["completed", "failed", "busy", "no-answer"],
+            status_callback_method="POST",
+        )
+
+    # Run the synchronous Twilio SDK call in a thread so it never blocks
+    # the asyncio event loop. When scheduled calls use this path, blocking
+    # the event loop delays the SID commit and causes Twilio's webhook to
+    # find no call record, triggering the slow fallback path (>15s timeout).
+    call = await asyncio.to_thread(_place_call)
 
     call_record.twilio_call_sid = call.sid
     await db.commit()

@@ -150,39 +150,58 @@ async def call_webhook(
     CallStatus: str = Form(default=""),
     db: AsyncSession = Depends(get_db),
 ):
+    import asyncio as _asyncio
+
     logger.info(f"Call answered for user={user_id}  sid={CallSid}  status={CallStatus}")
 
-    # Load user
-    user = await db.get(User, user_id)
-    if not user:
-        twiml = VoiceResponse()
-        twiml.say("Sorry, I could not find your profile. Goodbye.")
-        twiml.hangup()
+    try:
+        # Load user
+        user = await db.get(User, user_id)
+        if not user:
+            twiml = VoiceResponse()
+            twiml.say("Sorry, I could not find your profile. Goodbye.")
+            twiml.hangup()
+            return _twiml_response(twiml)
+
+        # Locate the pre-created call record. Retry briefly to absorb the small
+        # window between calls.create() returning and the SID commit landing in
+        # PostgreSQL (most relevant when the scheduler fires the call).
+        call = None
+        for attempt in range(4):
+            result = await db.execute(
+                select(Call)
+                .where(Call.user_id == user_id, Call.twilio_call_sid == CallSid)
+            )
+            call = result.scalars().first()
+            if call:
+                break
+            if attempt < 3:
+                await _asyncio.sleep(0.4)
+
+        if not call:
+            logger.warning(f"No pre-created call record found for sid={CallSid} after retries — creating blank.")
+            call = Call(
+                user_id=user_id,
+                twilio_call_sid=CallSid,
+                started_at=datetime.utcnow(),
+                messages=[],
+                turn_count=0,
+            )
+            db.add(call)
+            await db.commit()
+            await db.refresh(call)
+        else:
+            logger.info(f"Found pre-created call record id={call.id}  greeting_audio={call.greeting_audio}")
+
+        twiml = await build_opening_greeting(user, call, db)
         return _twiml_response(twiml)
 
-    # Create (or locate) DB call record — trigger_call.py pre-creates one and
-    # stores the call_sid so we can find it here.
-    result = await db.execute(
-        select(Call)
-        .where(Call.user_id == user_id, Call.twilio_call_sid == CallSid)
-    )
-    call = result.scalars().first()
-
-    if not call:
-        call = Call(
-            user_id=user_id,
-            twilio_call_sid=CallSid,
-            started_at=datetime.utcnow(),
-            messages=[],
-            turn_count=0,
-        )
-        db.add(call)
-        await db.commit()
-        await db.refresh(call)
-
-    # Generate opening TTS audio
-    twiml = await build_opening_greeting(user, call, db)
-    return _twiml_response(twiml)
+    except Exception as exc:
+        logger.exception(f"Unhandled error in call_webhook user={user_id} sid={CallSid}: {exc}")
+        twiml = VoiceResponse()
+        twiml.say("I'm sorry, I had a little trouble getting started. Let me try calling you again shortly.")
+        twiml.hangup()
+        return _twiml_response(twiml)
 
 
 # ---------------------------------------------------------------------------
