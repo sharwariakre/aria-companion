@@ -18,49 +18,88 @@ Unlike a chatbot, Aria initiates contact — it calls you, you don't open an app
 ![Twilio](https://img.shields.io/badge/Twilio-F22F46?style=flat&logo=twilio&logoColor=white)
 ![React](https://img.shields.io/badge/React-61DAFB?style=flat&logo=react&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=flat&logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?style=flat&logo=grafana&logoColor=white)
 
 | Layer | Tool |
 |---|---|
-| STT | faster-whisper (base.en, runs locally) |
-| LLM | Ollama + llama3.2:3b (runs locally) |
+| STT | faster-whisper (`small.en`, int8, runs locally) |
+| LLM | Ollama — `llama3.2:3b` for calls, `llama3.1:8b` for background tasks |
 | TTS | Kokoro TTS — `af_heart` voice (runs locally) |
 | Phone | Twilio outbound calling + webhooks |
 | Backend | FastAPI (async Python) |
 | Database | PostgreSQL + pgvector |
-| Embeddings | sentence-transformers (all-MiniLM-L6-v2) |
-| Mood analysis | librosa (energy, pitch, speech rate, pause ratio) |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`, 384-dim) |
+| Mood analysis | librosa (energy, pitch, speech rate, pause ratio) + LLM sentiment |
 | Dashboard | React + Vite + Tailwind CSS + Recharts |
-| Scheduler | APScheduler (Phase 5) |
+| Scheduler | APScheduler (`AsyncIOScheduler`, per-user timezone) |
+| Alerts | Gmail SMTP email to family |
+| Observability | Prometheus + Grafana (auto-provisioned) |
+| Tests | pytest + pytest-asyncio (GitHub Actions on every push) |
 
 ---
 
 ## Project Phases
 
 - [x] **Phase 1** — Call pipeline (Twilio → Whisper → Ollama → Kokoro → loop)
-- [x] **Phase 2** — Episodic memory (pgvector embeddings, fact extraction, memory injection)
-- [x] **Phase 3** — Mood signals (librosa acoustic features, personal baseline, escalation)
-- [x] **Phase 4** — Family dashboard (React, mood chart, memory log, alert banner)
-- [ ] **Phase 5** — Proactive scheduling (APScheduler, missed-call SMS escalation)
+- [x] **Phase 2** — Episodic memory (pgvector embeddings, fact extraction, cosine deduplication)
+- [x] **Phase 3** — Mood signals (acoustic features + LLM sentiment fusion, masking detection, escalation)
+- [x] **Phase 4** — Family dashboard (React, mood chart, memory log, alert banner, multi-user, auto-poll)
+- [x] **Phase 5** — Proactive scheduling (APScheduler, missed-call retry, startup reconciliation)
+- [x] **Phase 6** — Observability (Prometheus metrics, Grafana dashboard, ngrok health check)
 
 ---
 
 ## What Aria Does
 
 ### Phase 1 — Call pipeline
-Aria places an outbound call via Twilio. Each turn: records the user's speech → transcribes with Whisper → generates a response with Ollama → speaks with Kokoro TTS → loops. The LLM uses `[GOODBYE]` and `[ESCALATE]` control tokens to end calls or trigger emergency SMS. A pre-generated greeting is prepared before dialing to beat Twilio's 15-second answer timeout.
+Aria places an outbound call via Twilio. A greeting is **pre-generated before dialing** (memories → LLM → TTS) so the webhook can respond in milliseconds and never hit Twilio's 15-second timeout. Each turn: records speech → transcribes with Whisper → generates a response with Ollama → speaks with Kokoro TTS → loops. The LLM uses `[GOODBYE]` and `[ESCALATE]` control tokens to end calls or trigger family alerts.
 
 ### Phase 2 — Episodic memory
-After every call, the LLM extracts structured facts (people, places, health, hobbies, sentiments) from the transcript and stores them as vector embeddings in PostgreSQL via pgvector. On the next call, the **8 most recent memories** are injected into the system prompt — giving Aria continuity across conversations. Memories are used as background context; Aria does not re-ask about things it already knows.
+After every call, the LLM extracts structured facts from the transcript and stores them as 384-dim vector embeddings in PostgreSQL via pgvector. Before inserting, a cosine similarity check deduplicates near-identical facts (distance < 0.1). On the next call, the most semantically relevant memories are injected into Aria's system prompt. Aria opens each call with a follow-up on a recent topic and avoids repeating the previous call's opening question.
 
 ### Phase 3 — Mood signals
-After every call (minimum 3 turns), librosa extracts four acoustic features from the recorded audio: **energy**, **pitch**, **speech rate**, and **pause ratio**. These are compared against a rolling 3-call personal baseline to produce a normalized mood score (0–1). Scores below 0.35 flag the call for family review. Escalation (`[ESCALATE]`) is reserved for genuine emergencies: chest pain, falls, confusion about location, or expressions of self-harm — not loneliness or sadness.
+Two signal sources are fused into a single 0–1 score:
+- **Acoustic (40%)** — librosa extracts energy, pitch, speech rate, and pause ratio from per-turn recordings and compares them against the user's 3-call rolling baseline
+- **Sentiment (60%)** — the LLM scores emotional state (cheerful / content / neutral / tired / anxious / sad / distressed) and flags masking (saying "fine" when acoustic signals suggest distress)
+
+A `contradiction_flag` is set when the two sources differ by more than 0.4. Calls scoring below 0.35 trigger a family email alert. Mid-call `[ESCALATE]` fires immediately for genuine emergencies (chest pain, falls, confusion about location, self-harm) — not loneliness or everyday sadness.
 
 ### Phase 4 — Family dashboard
-A React + Vite single-page app served on port 5173. Reads call data from the backend REST API and displays:
-- **Status card** — last call time, duration, turn count, mood label (Calm / Low / Distressed)
-- **Alert banner** — only visible when the most recent call was flagged
-- **Mood chart** — 7-day Recharts line chart with a threshold reference line at 0.35; dots colored red below threshold
-- **Memory feed** — chronological list of extracted memory facts with category labels
+React + Vite SPA on port 5173. Auto-polls every 60 seconds, pauses when the browser tab is hidden. Features:
+- **User selector** — supports multiple users; tracks selection in the URL (`?user=...`)
+- **Status card** — last call time (local timezone), duration, turn count, mood label, emotional state
+- **Alert banner** — visible when the most recent call was flagged
+- **Mood chart** — 7-day Recharts line chart; threshold line at 0.35; red dots below threshold; shows calibrating state for the first 3 calls
+- **Memory feed** — scrollable list of extracted facts with timestamps in browser local time
+
+### Phase 5 — Proactive scheduling
+APScheduler fires a daily call for each user at their configured time and timezone (`call_time`, `timezone` columns on User). On startup, all users are scheduled and any open calls (ended_at = NULL) are reconciled against the Twilio API. Key behaviours:
+- **misfire_grace_time: 600s** — if the event loop was busy at the scheduled time, the job fires up to 10 minutes late
+- **Voicemail detection** — `completed` status with duration < 30s and no conversation is treated as missed
+- **Retry** — first missed call triggers a one-time retry 30 minutes later; second failure sends a family email alert
+- **PATCH /users/{user_id}/call-time** — update call time and timezone, reschedules the job immediately
+
+### Phase 6 — Observability
+Prometheus metrics scraped every 15s; Grafana dashboard auto-provisioned on container start (no manual datasource setup needed).
+
+**Metrics exported:**
+
+| Metric | Type | Description |
+|---|---|---|
+| `aria_stt_latency_seconds` | Histogram | Whisper transcription duration |
+| `aria_llm_latency_seconds` | Histogram | Ollama response generation duration |
+| `aria_tts_latency_seconds` | Histogram | Kokoro TTS generation duration |
+| `aria_turn_latency_seconds` | Histogram | Full STT→LLM→TTS pipeline per turn |
+| `aria_calls_total{outcome}` | Counter | Calls by outcome (completed/missed/escalated) |
+| `aria_active_calls` | Gauge | Calls currently in progress |
+| `aria_mood_score` | Histogram | Distribution of mood scores |
+| `aria_escalations_total{reason}` | Counter | Escalations by reason (low_mood/masking/mid_call) |
+| `aria_memory_retrieval_latency_seconds` | Histogram | pgvector similarity search duration |
+| `aria_memories_retrieved_per_call` | Histogram | Memories injected per call |
+| `aria_ngrok_up` | Gauge | 1 if ngrok tunnel is reachable, 0 if not |
+
+Counters are seeded from the database on startup so historical data survives backend restarts.
 
 ---
 
@@ -69,44 +108,65 @@ A React + Vite single-page app served on port 5173. Reads call data from the bac
 ```
 aria-companion/
 ├── backend/
-│   ├── main.py                      # FastAPI entry point + CORS middleware
-│   ├── config.py                    # Settings (pydantic-settings, loads ../.env)
+│   ├── main.py                      # FastAPI entry point, lifespan hooks
+│   ├── config.py                    # pydantic-settings (loads ../.env)
 │   ├── db/
-│   │   └── database.py              # Async SQLAlchemy engine + init_db
+│   │   └── database.py              # Async SQLAlchemy engine + idempotent migrations
 │   ├── models/
 │   │   └── user.py                  # User, Call, Memory ORM models
 │   ├── routers/
-│   │   ├── calls.py                 # Twilio webhook handlers + GET /{user_id}
-│   │   ├── memory.py                # GET /memories/{user_id}
-│   │   └── mood.py                  # GET /mood/{user_id}/history
-│   └── services/
-│       ├── stt.py                   # Whisper transcription (faster-whisper)
-│       ├── llm.py                   # Ollama chat wrapper + control token parsing
-│       ├── tts.py                   # Kokoro TTS → WAV → static file
-│       ├── call_manager.py          # Orchestrates the full call lifecycle
-│       ├── memory_service.py        # Embedding, storage, recency retrieval
-│       ├── mood.py                  # librosa feature extraction + baseline scoring
-│       └── escalation.py           # SMS escalation via Twilio Messaging
+│   │   ├── calls.py                 # Twilio webhooks + call history endpoints
+│   │   ├── memory.py                # GET /memory/{user_id}
+│   │   ├── mood.py                  # GET /mood/{user_id}/history
+│   │   └── users.py                 # GET /users, PATCH /users/{id}/call-time
+│   ├── services/
+│   │   ├── call_manager.py          # Full call lifecycle orchestration
+│   │   ├── llm.py                   # Ollama wrapper + control token parsing
+│   │   ├── stt.py                   # Whisper transcription (small.en, int8)
+│   │   ├── tts.py                   # Kokoro TTS → WAV
+│   │   ├── memory_service.py        # Embedding, storage, deduplication, retrieval
+│   │   ├── mood.py                  # Acoustic features + LLM sentiment fusion
+│   │   ├── escalation.py            # Gmail SMTP email alerts
+│   │   ├── scheduler.py             # APScheduler daily call jobs
+│   │   ├── missed_call.py           # Retry logic + two-failure escalation
+│   │   ├── health.py                # ngrok tunnel health check (local API)
+│   │   └── metrics.py               # Prometheus metric definitions
+│   ├── tests/
+│   │   ├── conftest.py
+│   │   ├── test_mood.py             # Mood scoring unit tests (11 tests)
+│   │   ├── test_llm.py              # LLM parsing unit tests (14 tests)
+│   │   └── test_health.py           # ngrok health check tests (5 tests)
+│   ├── requirements.txt
+│   ├── requirements-dev.txt         # Lightweight test-only dependencies
+│   └── pytest.ini
 ├── frontend/
 │   ├── src/
-│   │   ├── api.js                   # fetch helpers for calls, mood, memories
+│   │   ├── api.js                   # fetch helpers (fetchUsers, fetchCalls, etc.)
 │   │   ├── App.jsx
 │   │   ├── pages/
-│   │   │   └── Dashboard.jsx
+│   │   │   └── Dashboard.jsx        # Auto-poll, user selector, URL param state
 │   │   └── components/
-│   │       ├── Header.jsx
-│   │       ├── StatusCard.jsx
-│   │       ├── AlertBanner.jsx
-│   │       ├── MoodChart.jsx
-│   │       └── MemoryFeed.jsx
+│   │       ├── Header.jsx           # User selector dropdown + refresh button
+│   │       ├── StatusCard.jsx       # Last call summary, mood, missed state
+│   │       ├── AlertBanner.jsx      # Flagged call alert
+│   │       ├── MoodChart.jsx        # 7-day trend, calibrating state
+│   │       └── MemoryFeed.jsx       # Extracted memory facts
 │   ├── package.json
 │   └── vite.config.js
+├── grafana/
+│   ├── aria_dashboard.json          # 6-panel Grafana dashboard
+│   └── provisioning/
+│       ├── datasources/prometheus.yml  # Auto-configures Prometheus datasource
+│       └── dashboards/aria.yml         # Auto-loads dashboard on startup
 ├── scripts/
-│   ├── seed_user.py                 # Create test user Margaret
+│   ├── seed_user.py                 # Create a test user
 │   └── trigger_call.py             # Manually fire a test call
-├── docker-compose.yml               # PostgreSQL + pgvector (port 5433) + frontend
-├── .env.example
-└── README.md
+├── .github/
+│   └── workflows/
+│       └── tests.yml                # Run backend tests on every push
+├── docker-compose.yml               # DB + Prometheus + Grafana services
+├── prometheus.yml                   # Scrape config (host.docker.internal:8001)
+└── .env.example
 ```
 
 ---
@@ -116,9 +176,10 @@ aria-companion/
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - Python 3.11+
 - Node.js 20+
-- [Ollama](https://ollama.com/) installed and running
-- [ngrok](https://ngrok.com/download) for local Twilio webhooks
-- A [Twilio](https://twilio.com) account (free trial works — $15 credit included)
+- [Ollama](https://ollama.com/) installed and running locally
+- [ngrok](https://ngrok.com/download) with a static domain (free tier works)
+- A [Twilio](https://twilio.com) account (free trial credit included)
+- A Gmail account with an [App Password](https://myaccount.google.com/apppasswords) for email alerts
 
 ---
 
@@ -135,26 +196,42 @@ cp .env.example .env
 Fill in `.env`:
 
 ```env
+# Twilio
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=your_auth_token
-TWILIO_PHONE_NUMBER=+1xxxxxxxxxx
-TWILIO_TO_NUMBER=+1xxxxxxxxxx          # number to call (Margaret's phone)
-EMERGENCY_CONTACT_NUMBER=+1xxxxxxxxxx  # family member's number for escalation SMS
-OLLAMA_MODEL=llama3.2:3b
+TWILIO_PHONE_NUMBER=+1xxxxxxxxxx        # your Twilio number
+
+# Email alerts (Gmail SMTP)
+ALERT_EMAIL_FROM=you@gmail.com
+ALERT_EMAIL_PASSWORD=xxxx xxxx xxxx xxxx   # Gmail App Password
+ALERT_EMAIL_TO=family@example.com
+
+# Database
 DATABASE_URL=postgresql+asyncpg://aria:aria@localhost:5433/aria_db
-BASE_URL=https://your-ngrok-url.ngrok-free.app   # fill in after step 4
+
+# Ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b            # background tasks (extraction, sentiment)
+OLLAMA_CHAT_MODEL=llama3.2:3b       # real-time call chat
+
+# ngrok — fill in after step 5
+BASE_URL=https://your-static-domain.ngrok-free.app
 ```
 
-### 2. Start the database
+### 2. Start infrastructure
 
 ```bash
-docker compose up db -d
+docker compose up db prometheus grafana -d
 ```
 
-### 3. Pull the LLM
+- Prometheus: [http://localhost:9090](http://localhost:9090)
+- Grafana: [http://localhost:3000](http://localhost:3000) — admin / aria (Aria Companion dashboard is pre-loaded)
+
+### 3. Pull the LLM models
 
 ```bash
-ollama pull llama3.2:3b   # ~2GB, one-time download
+ollama pull llama3.2:3b     # real-time chat (~2 GB)
+ollama pull llama3.1:8b     # background extraction (~4.7 GB)
 ```
 
 ### 4. Start the backend
@@ -170,15 +247,16 @@ uvicorn main:app --reload --port 8001
 Wait for:
 ```
 All models loaded — Aria is ready to take calls.
+Scheduler started.
 ```
 
 ### 5. Expose via ngrok
 
 ```bash
-ngrok http 8001
+ngrok http --domain=your-static-domain.ngrok-free.app 8001
 ```
 
-Copy the `https://....ngrok-free.app` URL into `.env` as `BASE_URL`, then restart uvicorn.
+Copy the HTTPS URL into `.env` as `BASE_URL`, then restart uvicorn.
 
 ### 6. Start the dashboard
 
@@ -190,38 +268,53 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
-### 7. Seed Margaret and make a call
+### 7. Seed a user and make a call
 
 ```bash
-# From project root, venv active
-MARGARET_PHONE=+1xxxxxxxxxx python scripts/seed_user.py
-python scripts/trigger_call.py
+# from project root, venv active
+python scripts/seed_user.py          # creates Margaret with call_time=09:00 America/New_York
+python scripts/trigger_call.py       # fires an immediate test call
 ```
 
-Your phone rings. Press any key past the Twilio trial message. Aria speaks.
+Your phone rings. Aria speaks.
+
+---
+
+## Scheduling
+
+Each user has a `call_time` (HH:MM) and `timezone` stored in the database. The scheduler fires a daily call at that local time. To update:
+
+```bash
+curl -X PATCH http://localhost:8001/users/{user_id}/call-time \
+  -H "Content-Type: application/json" \
+  -d '{"call_time": "09:30", "timezone": "America/New_York"}'
+```
+
+**Missed call handling:**
+1. First missed call → retry in 30 minutes
+2. Second failure → email alert to family
 
 ---
 
 ## How the call loop works
 
 ```
-trigger_call.py
-    └─► Twilio dials user
-            └─► POST /calls/webhook/{user_id}
-                    └─► fetch 8 most recent memories
-                    └─► LLM generates personalised greeting
-                    └─► Kokoro TTS → WAV file
-                    └─► TwiML: <Play> + <Record>
-                            └─► user speaks
+APScheduler (or trigger_call.py)
+    └─► pre-generate greeting (memories → LLM → TTS)  ← before dialing
+    └─► Twilio dials user (calls.create in thread pool — never blocks event loop)
+            └─► POST /calls/webhook/{user_id}           ← responds instantly
+                    └─► <Play> greeting WAV
+                    └─► <Record> user speech
                             └─► POST /calls/turn/{user_id}/{call_id}
-                                    └─► download recording
-                                    └─► Whisper transcribes
-                                    └─► Ollama generates response
+                                    └─► Whisper STT
+                                    └─► Ollama LLM
                                     └─► Kokoro TTS → WAV
-                                    └─► TwiML: <Play> + <Record>  (loops)
+                                    └─► <Play> + <Record>  (loops ≤ 12 turns)
                                     └─► [GOODBYE] → <Hangup>
-                                    └─► [ESCALATE] → SMS to emergency contact
+                                    └─► [ESCALATE] → email family immediately
+            └─► POST /calls/status/{call_id}
                     └─► BackgroundTask: extract memories + score mood
+                    └─► Email alert if mood < 0.35 or masking detected
 ```
 
 ---
@@ -230,36 +323,52 @@ trigger_call.py
 
 Mood is scored after every call with at least 3 turns:
 
-1. **Feature extraction** — librosa analyses the call recording for energy, pitch mean/std, speech rate, and pause ratio
-2. **Personal baseline** — the user's last 3 calls establish their normal range
-3. **Normalised score** — each feature is Z-scored against the baseline and mapped to 0–1 (0.5 = neutral, 1.0 = significantly elevated)
-4. **Flag threshold** — calls scoring below 0.35 are flagged and shown in the dashboard alert banner
+1. **Acoustic features** — librosa analyses the combined call recording: energy, pitch mean/std, speech rate, pause ratio
+2. **LLM sentiment** — Ollama scores emotional state and detects masking (claiming to be fine while acoustic signals suggest distress)
+3. **Personal baseline** — averaged from the user's last 3 scored calls
+4. **Fused score** — `0.4 × acoustic + 0.6 × sentiment`, range 0–1
+5. **Contradiction flag** — set when acoustic and sentiment scores diverge by > 0.4
 
-> Mood scoring requires a warm-up period. The first 3 calls default to 0.5 while the baseline is being established.
+Score interpretation: 0.0 = very distressed, 0.5 = neutral, 1.0 = very positive. Calls below **0.35** are flagged and shown in the dashboard alert banner.
+
+> The first 3 calls are a calibration period. The chart shows progress dots until a baseline is established.
 
 ---
 
 ## Memory System
 
-- Facts are extracted from every call transcript by the LLM and stored with vector embeddings
-- On each new call, the **8 most recent memories** are injected into Aria's system prompt
-- Aria uses memories as background context only — it does not re-ask about things it already knows
-- Aria opens each call with a follow-up question about a recent topic, and avoids repeating the same opening topic from the previous call
-
-> Known limitation: the small LLM (llama3.2:3b) occasionally hallucinates facts or creates duplicates. Deduplication and active/archived memory flags are planned for a future phase (see [#10](https://github.com/sharwariakre/aria-companion/issues/10)).
+- Facts extracted by LLM after every call (people, health, hobbies, events, sentiments)
+- Each fact embedded as a 384-dim vector and stored in PostgreSQL with pgvector
+- **Deduplication**: new memories with cosine distance < 0.1 to an existing memory are silently skipped
+- **Semantic retrieval**: most contextually relevant memories injected into the system prompt per call
+- **Recency retrieval**: most recent memories used to generate the opening follow-up question
+- Aria avoids repeating the same opening topic from the previous call
+- Memories can be soft-deleted (`active = FALSE`) without removing them from the database
 
 ---
 
-## Known Limitations & Open Issues
+## Observability
 
-| Issue | Description |
-|---|---|
-| [#9](https://github.com/sharwariakre/aria-companion/issues/9) | No proactive scheduling yet — calls must be triggered manually |
-| [#10](https://github.com/sharwariakre/aria-companion/issues/10) | Memory deduplication and stale-fact handling not yet implemented |
-| [#11](https://github.com/sharwariakre/aria-companion/issues/11) | Mood scores are unreliable for the first 3 calls (baseline warm-up) |
-| [#12](https://github.com/sharwariakre/aria-companion/issues/12) | Dashboard requires manual page reload to see new data |
-| [#13](https://github.com/sharwariakre/aria-companion/issues/13) | Dashboard and trigger script are hardcoded to Margaret's UUID |
-| [#14](https://github.com/sharwariakre/aria-companion/issues/14) | Short utterances ("yes", "no") are sometimes missed by Whisper VAD |
+Open Grafana at [http://localhost:3000](http://localhost:3000) (admin / aria). The **Aria Companion** dashboard includes:
+
+- **Pipeline Latency (p50/p95)** — STT, LLM, TTS, and full turn latency over time
+- **Call Outcomes (last 7d)** — completed vs missed vs escalated
+- **Active Calls** — live gauge (green/yellow/red thresholds)
+- **Mood Score Distribution** — histogram of mood scores over 7 days
+- **Memory Retrieval Latency (p95)** — pgvector similarity search timing
+- **ngrok Tunnel** — UP/DOWN, checked every 60s via the ngrok local management API
+
+---
+
+## Running Tests
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest -v
+```
+
+30 unit tests covering mood scoring logic, LLM token parsing, and ngrok health checks. No database or network access required. Tests run automatically on every push via GitHub Actions.
 
 ---
 
@@ -270,10 +379,12 @@ Mood is scored after every call with at least 3 turns:
 | `TWILIO_ACCOUNT_SID` | From Twilio console homepage |
 | `TWILIO_AUTH_TOKEN` | From Twilio console homepage |
 | `TWILIO_PHONE_NUMBER` | Your Twilio number (E.164 format) |
-| `TWILIO_TO_NUMBER` | The number Aria calls (Margaret's phone) |
-| `EMERGENCY_CONTACT_NUMBER` | Family member's number for escalation SMS |
-| `DATABASE_URL` | Postgres connection string (port 5433 to avoid local conflicts) |
+| `ALERT_EMAIL_FROM` | Gmail address to send alerts from |
+| `ALERT_EMAIL_PASSWORD` | Gmail App Password (not your login password) |
+| `ALERT_EMAIL_TO` | Family member's email for escalation alerts |
+| `DATABASE_URL` | asyncpg connection string (port 5433 to avoid local conflicts) |
 | `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) |
-| `OLLAMA_MODEL` | Model name (recommended: `llama3.2:3b`) |
-| `BASE_URL` | Your ngrok URL — must be publicly reachable by Twilio |
+| `OLLAMA_MODEL` | Background task model (default: `llama3.1:8b`) |
+| `OLLAMA_CHAT_MODEL` | Real-time call model (default: `llama3.2:3b`) |
+| `BASE_URL` | Your ngrok HTTPS URL — must be reachable by Twilio |
 | `AUDIO_DIR` | Where TTS WAV files are saved (default: `./audio`) |
