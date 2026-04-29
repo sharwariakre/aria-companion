@@ -25,6 +25,8 @@ services:
       db:
         condition: service_healthy
     env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://aria:aria@db:5432/aria_db
     volumes:
       - ./backend:/app
       - audio_files:/app/audio
