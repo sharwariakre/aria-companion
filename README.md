@@ -50,6 +50,68 @@ Unlike a chatbot, Aria initiates contact — it calls you, you don't open an app
 
 ---
 
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Triggers["Triggers"]
+        SCHED["APScheduler\n(daily cron per user)"]
+        MANUAL["trigger_call.py\n(manual / test)"]
+    end
+
+    subgraph Backend["FastAPI Backend  :8000"]
+        CM["call_manager.py\norchestrator"]
+        STT["Whisper STT\nsmall.en · int8"]
+        LLM["Ollama LLM\n3b chat · 8b background"]
+        TTS["Kokoro TTS\naf_heart · 24 kHz"]
+        MEM["memory_service.py\nembed · dedupe · retrieve"]
+        MOOD["mood.py\nlibrosa + LLM sentiment"]
+        METRICS["metrics.py\nPrometheus counters"]
+    end
+
+    subgraph Data["Data"]
+        PG[("PostgreSQL + pgvector\nusers · calls · memories")]
+        WAV["audio/\nWAV files"]
+    end
+
+    subgraph Phone["Phone"]
+        TW["Twilio\nProgrammable Voice"]
+        USER(("User\nPhone"))
+    end
+
+    subgraph Obs["Observability"]
+        PROM["Prometheus  :9090"]
+        GRAF["Grafana  :3000"]
+    end
+
+    DASH["React Dashboard  :5173"]
+
+    SCHED -->|"fires at call_time"| CM
+    MANUAL --> CM
+
+    CM -->|"retrieve recent memories"| MEM
+    MEM <-->|"read / write"| PG
+    CM -->|"generate greeting"| LLM
+    LLM -->|"text"| TTS
+    TTS -->|"save WAV"| WAV
+    CM -->|"calls.create"| TW
+    TW <-->|"outbound call"| USER
+    TW -->|"recording URL"| STT
+    STT -->|"transcript"| LLM
+    LLM -->|"response text"| TTS
+    WAV -->|"served over HTTP"| TW
+    CM -->|"post-call: extract facts"| MEM
+    CM -->|"post-call: score mood"| MOOD
+    MOOD -->|"write score"| PG
+    CM -->|"write call record"| PG
+    METRICS -->|"scrape /metrics"| PROM
+    PROM --> GRAF
+    DASH -->|"REST API polls"| CM
+    DASH -->|"reads history"| PG
+```
+
+---
+
 ## What Aria Does
 
 ### Phase 1 — Call pipeline
