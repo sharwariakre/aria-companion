@@ -108,6 +108,9 @@ graph TD
     PROM --> GRAF
     DASH -->|"REST API polls"| CM
     DASH -->|"reads history"| PG
+    MOOD -->|"alert on low score / masking"| GMAIL["Gmail SMTP\nemail alert"]
+    CM -->|"[ESCALATE] mid-call"| GMAIL
+    GMAIL -->|"email"| FAMILY(("Family"))
 ```
 
 ---
