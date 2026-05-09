@@ -7,7 +7,7 @@ Day sequence:
   Day -6  0.58  (baseline building)
   Day -5  0.71  (baseline building — 3rd call, baseline now established)
   Day -4  0.65  (normal)
-  Day -3  0.28  ← THE DIP — flagged, SMS triggered  ← demo moment
+  Day -3  0.28  ← THE DIP — flagged, email alert triggered  ← demo moment
   Day -2  0.55  (recovering)
   Day -1  0.67  (back to normal)
 
@@ -162,14 +162,14 @@ async def seed():
             )
             db.add(call)
             inserted += 1
-            flag_note = "  ← FLAGGED (SMS would fire)" if flagged else ""
+            flag_note = "  ← FLAGGED (email alert would fire)" if flagged else ""
             print(f"  Day -{days_ago:1d}  mood={mood_score:.2f}  profile={profile}{flag_note}")
 
         await db.commit()
         print(f"\nInserted {inserted} seeded calls for Margaret ({margaret.id}).")
         print("\nDemo tip:")
         print("  Day -3 (score=0.28) is your dashboard demo moment.")
-        print("  Point to the dip and say: 'This triggered an SMS to Sarah automatically.'")
+        print("  Point to the dip and say: 'This triggered an email alert to Sarah automatically.'")
         print(f"\nVerify: GET {os.getenv('BASE_URL', 'http://localhost:8001')}/mood/{margaret.id}")
 
     await engine.dispose()

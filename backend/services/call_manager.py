@@ -288,7 +288,7 @@ async def post_call_processing(call_id: uuid.UUID) -> None:
 
     1. Memory extraction (LLM fact extraction + pgvector storage)
     2. Mood scoring (librosa features + baseline comparison)
-    3. SMS escalation if mood drops significantly below baseline
+    3. Email escalation if mood drops significantly below baseline
     """
     from db.database import AsyncSessionLocal
 
