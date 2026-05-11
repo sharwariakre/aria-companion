@@ -21,10 +21,12 @@ class Settings(BaseSettings):
     # Database — port 5433 avoids conflict with any local Postgres on 5432
     database_url: str = "postgresql+asyncpg://aria:aria@localhost:5433/aria_db"
 
-    # Ollama
+    # Groq
+    groq_api_key: str = ""
+
+    # Ollama (used for background tasks — memory extraction, sentiment scoring)
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.1:8b"       # used for background tasks (extraction, sentiment)
-    ollama_chat_model: str = "llama3.2:3b"  # used for real-time call chat (speed critical)
+    ollama_model: str = "llama3.1:8b"
 
     # App
     base_url: str = "http://localhost:8001"

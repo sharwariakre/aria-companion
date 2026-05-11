@@ -1,9 +1,9 @@
 """
-Ollama LLM wrapper.
+Groq LLM wrapper.
 
-Sends multi-turn messages to the Ollama /api/chat endpoint and returns
-the assistant response as a plain string.  Also parses special control
-tokens that Aria embeds in its replies:
+Sends multi-turn messages to the Groq API and returns the assistant
+response as a plain string.  Also parses special control tokens that
+Aria embeds in its replies:
 
   [GOODBYE]  — natural end of call
   [ESCALATE] — user mentioned pain, emergency, or extreme distress
@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
-import httpx
+from groq import AsyncGroq
 
 from config import get_settings
 
@@ -97,31 +97,25 @@ async def chat(
     temperature: float = 0.7,
 ) -> LLMResponse:
     """
-    Send a conversation history to Ollama and return a structured response.
+    Send a conversation history to Groq and return a structured response.
 
     `messages` is a list of {"role": "user"/"assistant", "content": str} dicts.
     The system prompt is prepended automatically.
     """
-    payload = {
-        "model": settings.ollama_chat_model,
-        "messages": [
-            {"role": "system", "content": build_system_prompt(user_name, memories=memories)},
-            *messages,
-        ],
-        "stream": False,
-        "options": {"temperature": temperature},
-    }
-
     try:
-        async with httpx.AsyncClient(
-            base_url=settings.ollama_base_url, timeout=60.0
-        ) as client:
-            resp = await client.post("/api/chat", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            raw_text = data["message"]["content"].strip()
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        completion = await client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": build_system_prompt(user_name, memories=memories)},
+                *messages,
+            ],
+            temperature=temperature,
+            max_tokens=300,
+        )
+        raw_text = completion.choices[0].message.content.strip()
     except Exception as exc:
-        logger.error(f"Ollama request failed: {exc}")
+        logger.error(f"Groq request failed: {exc}")
         # Graceful fallback so the call doesn't die silently
         return LLMResponse(
             text="I'm sorry, I had a little trouble thinking just then. Could you say that again?",
@@ -173,7 +167,7 @@ async def generate_opening(user_name: str, memories: str = "", prev_opening: str
     messages = [{"role": "user", "content": opening_instruction}]
     resp = await chat(messages, user_name=user_name, memories=memories)
 
-    # If Ollama was down, the generic error fallback is a bad opening line — replace it
+    # If Groq was down, the generic error fallback is a bad opening line — replace it
     if resp.text.startswith("I'm sorry, I had a little trouble"):
         resp.text = f"Hello {user_name}, it's Aria! How are you feeling today?"
     return resp
