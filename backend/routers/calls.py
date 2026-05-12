@@ -194,6 +194,7 @@ async def call_webhook(
             logger.info(f"Found pre-created call record id={call.id}  greeting_audio={call.greeting_audio}")
 
         twiml = await build_opening_greeting(user, call, db)
+        logger.info(f"TwiML response: {str(twiml)}")
         return _twiml_response(twiml)
 
     except Exception as exc:
