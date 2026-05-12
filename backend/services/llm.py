@@ -105,7 +105,7 @@ async def chat(
     try:
         client = AsyncGroq(api_key=settings.groq_api_key)
         completion = await client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": build_system_prompt(user_name, memories=memories)},
                 *messages,
