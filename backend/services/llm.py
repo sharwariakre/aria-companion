@@ -111,7 +111,7 @@ async def chat(
                 *messages,
             ],
             temperature=temperature,
-            max_tokens=300,
+            max_tokens=500,
         )
         raw_text = completion.choices[0].message.content.strip()
     except Exception as exc:
