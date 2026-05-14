@@ -236,6 +236,38 @@ aria-companion/
 
 ---
 
+## Running locally vs Docker
+
+There are two ways to run the backend:
+
+### Option A — Everything in Docker (recommended)
+
+The DB, backend, and frontend all run as containers. Use `.env` with `localhost:5433` as the database URL — `docker-compose.yml` automatically overrides it to `db:5432` inside the container, so you don't need to change anything.
+
+```bash
+cp .env.example .env          # fill in your keys
+docker compose up -d
+```
+
+Dashboard: `http://localhost:5173` — Backend: `http://localhost:8000`
+
+### Option B — Backend in venv, DB in Docker
+
+Run the DB in Docker but the backend natively on your Mac (useful for faster iteration without rebuilding the image).
+
+```bash
+cp .env.local.example .env.local   # fill in your keys
+docker compose up -d db            # start only the DB
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+The `DATABASE_URL` in `.env.local.example` already points to `localhost:5433` which is the host-mapped DB port.
+
+---
+
 ## Prerequisites
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)

@@ -38,6 +38,8 @@ services:
     command: sh -c "npm install && npm run dev"
     ports:
       - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
     volumes:
       - ./frontend:/app
     restart: unless-stopped
