@@ -192,7 +192,10 @@ Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+    "http://localhost:5173",
+    "http://54.165.191.205:5173",
+],
     allow_methods=["GET", "PATCH", "POST"],
     allow_headers=["*"],
 )
